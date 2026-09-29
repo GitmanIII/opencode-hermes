@@ -102,7 +102,7 @@ function mockClient() {
   setSkillsRoot(SKB);
   const pluginModule = (await import("../../index.ts")).default;
   const client = mockClient();
-  const hooks: any = await pluginModule.server({ client, project: { id: "sample-project" }, directory: "/home/emil/sample-project" });
+  const hooks: any = await pluginModule.server({ client, project: { id: "sample-project" }, directory: "/home/emil/sample-project" } as any);
 
   await hooks["chat.message"]({ sessionID: "ses_live_b" }, { parts: [{ type: "text", text: "hello" }] });
   await hooks["chat.message"]({ sessionID: "ses_live_b" }, { parts: [{ type: "text", text: "again" }] });

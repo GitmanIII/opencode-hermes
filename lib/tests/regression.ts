@@ -61,6 +61,19 @@ r = await store.applyBatch("memory", [
 assert("batch applies atomically", r.success && store.getEntries("memory").includes("batch Y") && store.getEntries("memory").includes("batch X2"));
 assert("batch dedupes duplicate adds", store.getEntries("memory").filter((e) => e === "batch X").length === 0);
 
+// the mirror needs the exact matched entry text (not the model's substring)
+r = await store.replace("memory", "batch Y", "batch Y2");
+assert("replace reports the matched entry", r.success && r.matched === "batch Y");
+r = await store.add("memory", "ephemeral remove me");
+r = await store.remove("memory", "ephemeral remove me");
+assert("remove reports the matched entry", r.success && r.matched === "ephemeral remove me");
+r = await store.applyBatch("memory", [
+  { action: "add", content: "batch demote target" },
+  { action: "demote", old_text: "batch demote target" },
+]);
+assert("batch demote evicts the entry", r.success && !store.getEntries("memory").includes("batch demote target"));
+assert("batch demote resolves the exact entry", (r.resolved ?? []).some((o) => o.action === "demote" && o.matched === "batch demote target"));
+
 // atomic batch failure leaves store unchanged
 const before = [...store.getEntries("memory")];
 r = await store.applyBatch("memory", [{ action: "add", content: "temp" }, { action: "remove", old_text: "missing entry" }]);

@@ -19,6 +19,9 @@ export type ProviderContext = {
 
 export type ProviderHit = { id: string; text: string; score: number };
 
+/** Mirror actions for built-in memory writes (see `onMemoryWrite`). */
+export type MemoryWriteAction = "add" | "replace" | "remove" | "demote";
+
 export interface MemoryProvider {
   readonly name: string;
   initialize(ctx: ProviderContext): Promise<void>;
@@ -29,8 +32,16 @@ export interface MemoryProvider {
   add(content: string, tags?: string[]): Promise<{ id: string }>;
   search(query: string, limit?: number): Promise<ProviderHit[]>;
   forget(id: string): boolean | Promise<boolean>;
-  /** Mirror a built-in memory write into the provider store. */
-  onMemoryWrite(action: "add" | "replace" | "remove", content: string): Promise<void>;
+  /**
+   * Mirror a built-in memory write into the provider store.
+   * - `add`:     `content` is the new entry.
+   * - `replace`: `content` is the new entry, `oldText` the entry it supersedes
+   *              (providers should delete the old text and add the new).
+   * - `remove`:  `content` is the wrong/superseded entry (delete it).
+   * - `demote`:  `content` is the evicted entry — keep it (this is the
+   *              append-only path: facts that age out stay recallable).
+   */
+  onMemoryWrite(action: MemoryWriteAction, content: string, oldText?: string): Promise<void>;
   /** Optional: providers that scope notes can track the active project. */
   setProject?(projectId: string | null): void;
   shutdown(): void;

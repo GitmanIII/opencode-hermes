@@ -23,11 +23,13 @@ export const BLOCK_SEPARATOR = "═".repeat(46);
 // ─── Memory tool description (Hermes MEMORY_SCHEMA) ───
 export const MEMORY_TOOL_DESCRIPTION = `Save durable facts to persistent memory that survive across sessions. Memory is injected into every future turn, so keep entries compact and high-signal.
 
-HOW: make ALL your changes in ONE call via an 'operations' array (each item: {action, content?, old_text?}). The batch applies atomically and the char limit is checked only on the FINAL result — so a single call can remove/replace stale entries to free room AND add new ones, even when an add alone would overflow. The response reports current/limit chars and confirms completion; one batch call finishes the update, so don't repeat it. Use the bare action/content/old_text fields only for a single lone change.
+HOW: make ALL your changes in ONE call via an 'operations' array (each item: {action, content?, old_text?}). The batch applies atomically and the char limit is checked only on the FINAL result — so a single call can demote/remove/replace stale entries to free room AND add new ones, even when an add alone would overflow. The response reports current/limit chars and confirms completion; one batch call finishes the update, so don't repeat it. Use the bare action/content/old_text fields only for a single lone change.
+
+ACTIONS: 'remove' deletes a fact that is wrong or has been superseded (it is also deleted from long-term memory); 'demote' evicts a still-useful fact to free room but keeps it recallable in long-term memory. Prefer 'demote' over 'remove' when the fact is merely low-priority rather than false.
 
 WHEN: save proactively when the user states a preference, correction, or personal detail, or you learn a stable fact about their environment, conventions, or workflow. Priority: user preferences & corrections > environment facts > procedures. The best memory stops the user repeating themselves.
 
-IF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that removes or shortens enough stale entries and adds the new one together.
+IF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that demotes/removes or shortens enough stale entries and adds the new one together.
 
 TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your notes (environment, conventions, tool quirks, lessons).
 
@@ -48,10 +50,11 @@ export const MEMORY_OPERATIONS_SCHEMA = `Respond with JSON only (no markdown fen
 }
 
 Operation fields:
-- action: "add" | "replace" | "remove"
+- action: "add" | "replace" | "remove" | "demote"
 - target: "memory" | "user"
 - content: required for add/replace
-- old_text: required for replace/remove (substring match)`;
+- old_text: required for replace/remove/demote (substring match)
+- "remove" = fact is wrong/superseded; "demote" = still useful, only freeing room (kept recallable in long-term memory)`;
 
 export const SKILLS_OPERATIONS_SCHEMA = `Also return a "skills" array for procedural-memory updates (omit it, or leave it empty, if none):
 {

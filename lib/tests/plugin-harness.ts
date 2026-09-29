@@ -48,7 +48,7 @@ const client = {
   tui: { showToast: async () => {} },
 };
 
-const hooks: any = await pluginModule.server({ client, project: { id: "sample-project" }, directory: "/home/emil/sample-project" });
+const hooks: any = await pluginModule.server({ client, project: { id: "sample-project" }, directory: "/home/emil/sample-project" } as any);
 
 // 1. whole-file memory injection
 const out = { system: [] as string[] };

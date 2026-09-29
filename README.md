@@ -6,10 +6,10 @@ A faithful, local port of [Hermes](https://github.com/weaigc/hermes)' built-in m
 
 - **Two files, injected whole** — `MEMORY.md` (your notes) and `USER.md` (the user profile) are rendered into the system prompt every session, with Hermes' headers and a per-session frozen snapshot. No retrieval.
 - **Hard char caps** — `MEMORY.md` 2200, `USER.md` 1375 (Hermes defaults), configurable.
-- **One `memory` tool** — `target: memory|user`, `action: add|replace|remove`, plus an atomic batch (`operations[]`). Adds are idempotent; the budget is checked only on the final batch result, and an over-budget write returns a *consolidate-and-retry* error rather than silently dropping anything.
+- **One `memory` tool** — `target: memory|user`, `action: add|replace|remove|demote`, plus an atomic batch (`operations[]`). Adds are idempotent; the budget is checked only on the final batch result, and an over-budget write returns a *consolidate-and-retry* error rather than silently dropping anything.
 - **Self-learning review** — after N turns, on session idle, a review pass reads the conversation and writes memory **and** skills.
 - **Session recall** — `session_search` reads OpenCode's own session database (read-only) to find and read past conversations (discovery / read / scroll / browse; actual messages, no LLM). A system-prompt nudge tells the model to use it when the user references the past.
-- **External memory provider (optional, one)** — `provider: "sqlite"` adds an unbounded local note store with **automatic prefetch** (relevant notes injected before each turn) and mirrors built-in memory writes, so facts that age out of the capped files stay recallable. Off by default (Hermes ships built-in-only).
+- **External memory provider (optional, one)** — `provider: "sqlite"` adds an unbounded local note store with **automatic prefetch** (relevant notes injected before each turn). It mirrors built-in writes: `add`/`replace` store the current fact (a replace deletes the superseded one), `remove` propagates the deletion, and `demote` evicts a fact from the capped file while keeping it recallable. Off by default (Hermes ships built-in-only).
 - **Skills (procedural memory)** — `skill_list` / `skill_view` / `skill_manage` / `skill_curate` / `skill_restore`, with validation, guards (the review may only edit agent-created skills), and a stale/archive lifecycle.
 - **Robust writes** — atomic temp+rename with SHA-256 fingerprint conflict detection and retry (safe for multiple concurrent OpenCode processes).
 
@@ -85,7 +85,7 @@ Or put the same keys in `~/.config/opencode/opencode-hermes.json` (JSON or JSONC
 - a `file://` URL / path to a module exporting `createProvider(options)` or a default factory, or
 - an npm package name.
 
-Provider options go under `providerOptions`; `initialize()` receives `{ memoryRoot, providerPath, prefetchLimit, options, projectId }`. One provider at a time. It's used for **automatic prefetch** (before each user message), **mirrors built-in memory writes**, and backs the `provider_memory` tool. Providers that scope notes can implement `setProject(id)`.
+Provider options go under `providerOptions`; `initialize()` receives `{ memoryRoot, providerPath, prefetchLimit, options, projectId }`. One provider at a time. It's used for **automatic prefetch** (before each user message), **mirrors built-in memory writes** from both the `memory` tool and the background/flush review (`add`/`replace`/`remove`/`demote` — removals propagate, evictions stay recallable), and backs the `provider_memory` tool. Providers that scope notes can implement `setProject(id)`.
 
 **Companion:** [**opencode-hermes-embeddings**](https://github.com/GitmanIII/opencode-hermes-embeddings) — semantic recall on your own GPU via HuggingFace **text-embeddings-inference** (`nomic-embed-text-v1.5`, 768-dim), project-scoped.
 
@@ -107,7 +107,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 bun run test
 ```
 
-103 hermetic checks (no model, no network): store semantics, injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, config.
+147 hermetic checks (no model, no network): store semantics, injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, config.
 
 ## Attribution & License
 

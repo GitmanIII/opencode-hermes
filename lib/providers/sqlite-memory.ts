@@ -6,7 +6,7 @@
  * that ages out of the capped MEMORY.md/USER.md stays recallable long-term.
  */
 import { Database } from "bun:sqlite";
-import type { MemoryProvider, ProviderContext, ProviderHit } from "../memory-provider.ts";
+import type { MemoryProvider, MemoryWriteAction, ProviderContext, ProviderHit } from "../memory-provider.ts";
 
 export class SqliteMemoryProvider implements MemoryProvider {
   readonly name = "sqlite";
@@ -25,14 +25,14 @@ export class SqliteMemoryProvider implements MemoryProvider {
     return "An external long-term memory store (provider: sqlite) is active. Relevant notes from it are injected automatically before each turn; use the provider_memory tool to search or add notes.";
   }
 
-  add(content: string, tags?: string[]): { id: string } {
+  async add(content: string, tags?: string[]): Promise<{ id: string }> {
     const text = content.trim();
     const id = `pm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.db.run(`INSERT INTO memo (id, text, tags, created_at) VALUES (?, ?, ?, ?)`, [id, text, tags?.join(",") ?? null, Date.now()]);
     return { id };
   }
 
-  search(query: string, limit = 5): ProviderHit[] {
+  async search(query: string, limit = 5): Promise<ProviderHit[]> {
     const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
     if (!terms.length) return [];
     const rows = this.db.query(`SELECT id, text FROM memo`).all() as { id: string; text: string }[];
@@ -54,7 +54,7 @@ export class SqliteMemoryProvider implements MemoryProvider {
   }
 
   async prefetch(query: string): Promise<{ text: string; hits: number }> {
-    const hits = this.search(query, this.prefetchLimit);
+    const hits = await this.search(query, this.prefetchLimit);
     if (!hits.length) return { text: "", hits: 0 };
     const body = hits.map((h) => `• ${h.text.slice(0, 400)}`).join("\n");
     return { text: `<provider-memory source="sqlite">\nRelevant notes from past sessions:\n${body}\n</provider-memory>`, hits: hits.length };
@@ -65,13 +65,23 @@ export class SqliteMemoryProvider implements MemoryProvider {
     return true;
   }
 
-  async onMemoryWrite(action: "add" | "replace" | "remove", content: string): Promise<void> {
-    // Keep the long-term store append-only: replacement text is the new fact.
-    if (action === "remove") return;
+  async onMemoryWrite(action: MemoryWriteAction, content: string, oldText?: string): Promise<void> {
+    // `demote` is the append-only path: the fact is evicted from the capped
+    // file but kept here. `remove`/`replace` propagate the deletion so wrong or
+    // superseded facts stop being recalled.
+    if (action === "demote") return;
+    if (action === "remove") return this.deleteByText(content);
+    if (action === "replace") this.deleteByText(oldText ?? "");
     const text = content.trim();
     if (!text) return;
     const dup = this.db.query(`SELECT id FROM memo WHERE text = ? LIMIT 1`).get(text);
-    if (!dup) this.add(text);
+    if (!dup) await this.add(text);
+  }
+
+  private deleteByText(text: string): void {
+    const t = (text ?? "").trim();
+    if (!t) return;
+    this.db.run(`DELETE FROM memo WHERE text = ?`, [t]);
   }
 
   shutdown(): void {

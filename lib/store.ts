@@ -4,7 +4,7 @@
  * Faithful to Hermes' built-in memory (tools/memory_tool.py): two flat,
  * §-delimited files — MEMORY.md (agent notes) and USER.md (user profile) —
  * injected whole into the system prompt, with hard char caps and a single
- * mutation surface (add/replace/remove + atomic batch). No retrieval, no
+ * mutation surface (add/replace/remove/demote + atomic batch). No retrieval, no
  * project/failure/history layers, no per-entry metadata.
  *
  * Writes are atomic (temp + rename) with SHA-256 fingerprint conflict
@@ -23,13 +23,21 @@ import {
 } from "./prompts.ts";
 
 export type Target = "memory" | "user";
-export type MemoryAction = "add" | "replace" | "remove";
+/**
+ * `remove` deletes a fact (it was wrong/superseded). `demote` evicts a fact from
+ * the capped file to free room but keeps it recallable in the long-term provider
+ * store. Both behave identically on disk; they differ only in what the mirror is
+ * told to do.
+ */
+export type MemoryAction = "add" | "replace" | "remove" | "demote";
 
 export type MemoryOperation = {
   action: MemoryAction;
   content?: string;
   old_text?: string;
 };
+
+export type ResolvedOperation = { action: MemoryAction; matched: string; content?: string };
 
 export type MemoryResult = {
   success: boolean;
@@ -39,6 +47,10 @@ export type MemoryResult = {
   entry_count?: number;
   matches?: string[];
   current_entries?: string[];
+  /** The full entry text a single replace/remove/demote actually resolved to. */
+  matched?: string;
+  /** Per-operation resolution for a batch (exact entry text, for the mirror). */
+  resolved?: ResolvedOperation[];
   done?: boolean;
 };
 
@@ -145,15 +157,15 @@ export class MemoryStore {
     }
     return {
       success: false,
-      error: `${prefix} Memory at ${this.charCount(target)}/${this.charLimit(target)} chars. Consolidate now: use 'replace' to shorten or 'remove' entries, then retry — all in this turn.`,
+      error: `${prefix} Memory at ${this.charCount(target)}/${this.charLimit(target)} chars. Consolidate now: use 'replace' to shorten, 'demote' to evict a still-useful fact (kept in long-term memory), or 'remove' a wrong/superseded one, then retry — all in this turn.`,
       usage: this.usage(target),
       current_entries: this.entries[target].map((e) => e.slice(0, 80) + (e.length > 80 ? "..." : "")),
     };
   }
 
-  private successResponse(target: Target, message: string): MemoryResult {
+  private successResponse(target: Target, message: string, extra: Partial<MemoryResult> = {}): MemoryResult {
     this.consolidationFailures = 0;
-    return { success: true, message, usage: this.usage(target), entry_count: this.entries[target].length };
+    return { success: true, message, usage: this.usage(target), entry_count: this.entries[target].length, ...extra };
   }
 
   // ─── Mutations ───
@@ -191,7 +203,7 @@ export class MemoryStore {
       return this.consolidationFailure(target, "Replacement would exceed the limit.");
     }
     await this.saveToDisk(target, next);
-    return this.successResponse(target, "Write saved. This update is complete — do not repeat it.");
+    return this.successResponse(target, "Write saved. This update is complete — do not repeat it.", { matched: matches[0] });
   }
 
   async remove(target: Target, oldText: string): Promise<MemoryResult> {
@@ -207,20 +219,21 @@ export class MemoryStore {
     }
     const next = this.entries[target].filter((e) => e !== matches[0]);
     await this.saveToDisk(target, next);
-    return this.successResponse(target, "Write saved. This update is complete — do not repeat it.");
+    return this.successResponse(target, "Write saved. This update is complete — do not repeat it.", { matched: matches[0] });
   }
 
   /** All-or-nothing batch; budget checked only on the final state (Hermes apply_batch). */
   async applyBatch(target: Target, operations: MemoryOperation[]): Promise<MemoryResult> {
     await this.syncFromDiskIfChanged(target);
     let planned = [...this.entries[target]];
+    const resolved: ResolvedOperation[] = [];
     for (const op of operations) {
       const action = op.action;
       if (action === "add") {
         const text = (op.content ?? "").trim();
         if (!text) return { success: false, error: "Memory mutation add requires content." };
-        if (planned.includes(text)) continue; // idempotent
-        planned.push(text);
+        if (!planned.includes(text)) planned.push(text); // idempotent
+        resolved.push({ action, matched: text, content: text });
         continue;
       }
       const needle = (op.old_text ?? "").trim();
@@ -230,19 +243,21 @@ export class MemoryStore {
       if (matches.length > 1) {
         return { success: false, error: `Multiple entries matched '${needle}'. Be more specific.`, matches: matches.map(preview) };
       }
-      if (action === "remove") {
+      if (action === "remove" || action === "demote") {
         planned = planned.filter((e) => e !== matches[0]);
+        resolved.push({ action, matched: matches[0] });
         continue;
       }
       const text = (op.content ?? "").trim();
       if (!text) return { success: false, error: "Memory mutation replace requires content." };
       planned = planned.map((e) => (e === matches[0] ? text : e));
+      resolved.push({ action, matched: matches[0], content: text });
     }
     if (planned.join(ENTRY_DELIMITER).length > this.charLimit(target)) {
       return this.consolidationFailure(target, "Memory mutation plan would exceed the limit.");
     }
     await this.saveToDisk(target, planned);
-    return this.successResponse(target, `Applied ${operations.length} memory operations atomically.`);
+    return this.successResponse(target, `Applied ${operations.length} memory operations atomically.`, { resolved });
   }
 
   // ─── Atomic disk writes ───

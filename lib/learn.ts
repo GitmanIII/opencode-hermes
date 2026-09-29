@@ -13,6 +13,7 @@ import {
   REVIEW_USER_PROMPT,
 } from "./prompts.ts";
 import { applySkillOperations, listSkills, type SkillOperation } from "./skills.ts";
+import type { MemoryManager } from "./memory-manager.ts";
 import type { MemoryOperation, MemoryStore, Target } from "./store.ts";
 
 // ─── Operations extraction from LLM JSON output ───
@@ -26,7 +27,7 @@ function opsFromParsed(parsed: unknown): MemoryOperation[] {
   return ops.filter((op): op is MemoryOperation => {
     if (!op || typeof op !== "object") return false;
     const action = (op as RawOperation).action;
-    return action === "add" || action === "replace" || action === "remove";
+    return action === "add" || action === "replace" || action === "remove" || action === "demote";
   });
 }
 
@@ -76,7 +77,11 @@ export function extractOperations(text: string): {
 }
 
 /** Apply memory operations grouped by target (each target is an atomic batch). */
-export async function applyOperations(store: MemoryStore, operations: MemoryOperation[]): Promise<{ errors: string[] }> {
+export async function applyOperations(
+  store: MemoryStore,
+  operations: MemoryOperation[],
+  manager?: MemoryManager | null,
+): Promise<{ errors: string[] }> {
   const errors: string[] = [];
   const byTarget = new Map<Target, MemoryOperation[]>();
   for (const op of operations) {
@@ -88,6 +93,7 @@ export async function applyOperations(store: MemoryStore, operations: MemoryOper
   for (const [target, ops] of byTarget) {
     const result = await store.applyBatch(target, ops);
     if (!result.success) errors.push(`${target}: ${result.error}`);
+    else if (manager) await manager.mirrorResolved(result.resolved);
   }
   return { errors };
 }
@@ -132,6 +138,7 @@ export async function runBackgroundReview(
   projectId: string,
   sessionID: string,
   skillsRoot?: string,
+  manager?: MemoryManager | null,
 ): Promise<{ savedCount: number; savedSkills?: number; error?: string }> {
   try {
     const msgs = await client.session.messages({ path: { id: sessionID } });
@@ -150,7 +157,7 @@ export async function runBackgroundReview(
     if (error) return { savedCount: 0, error };
     reviewedUpTo.set(sessionID, all.length);
 
-    const applied = operations.length ? await applyOperations(store, operations) : { errors: [] as string[] };
+    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[] };
     const skillOps = skillsRoot ? skills : [];
     const appliedSkills = skillOps.length
       ? await applySkillOperations(skillsRoot!, skillOps, { origin: "agent" })
@@ -173,6 +180,7 @@ export async function runFlushReview(
   projectId: string,
   sessionID: string,
   skillsRoot?: string,
+  manager?: MemoryManager | null,
 ): Promise<{ savedCount: number; savedSkills?: number; error?: string }> {
   try {
     const msgs = await client.session.messages({ path: { id: sessionID } });
@@ -186,7 +194,7 @@ export async function runFlushReview(
 
     const { operations, skills, error } = extractOperations(completion.text);
     if (error) return { savedCount: 0, error };
-    const applied = operations.length ? await applyOperations(store, operations) : { errors: [] as string[] };
+    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[] };
     const skillOps = skillsRoot ? skills : [];
     const appliedSkills = skillOps.length
       ? await applySkillOperations(skillsRoot!, skillOps, { origin: "agent" })

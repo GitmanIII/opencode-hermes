@@ -201,7 +201,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(async () => {
           try {
-            const result = await runBackgroundReview(client, store, directory, projectIdOf(project, directory), sessionID, skillsRoot());
+            const result = await runBackgroundReview(client, store, directory, projectIdOf(project, directory), sessionID, skillsRoot(), manager);
             lastReviewAt = Date.now();
             log(`background review: saved=${result.savedCount} skills=${result.savedSkills ?? 0}${result.error ? ` err=${result.error}` : ""}`);
             sessionTurns.set(sessionID, 0);
@@ -230,7 +230,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
       try {
         const sessionID = (input as { sessionID?: string }).sessionID;
         if (!sessionID || isInternalSessionId(sessionID)) return;
-        const result = await runFlushReview(client, store, directory, projectIdOf(project, directory), sessionID, skillsRoot());
+        const result = await runFlushReview(client, store, directory, projectIdOf(project, directory), sessionID, skillsRoot(), manager);
         if (result.savedCount > 0 || (result.savedSkills ?? 0) > 0) {
           output.context.push(`opencode-hermes: saved ${result.savedCount} memory + ${result.savedSkills ?? 0} skill item(s) before compaction.`);
         }
@@ -245,13 +245,13 @@ const plugin: Plugin = async ({ client, project, directory }) => {
         description: MEMORY_TOOL_DESCRIPTION,
         args: {
           target: tool.schema.enum(["memory", "user"]).optional().describe("memory = your notes; user = who the user is."),
-          action: tool.schema.enum(["add", "replace", "remove"]).optional().describe("Single operation (omit when using operations[])."),
+          action: tool.schema.enum(["add", "replace", "remove", "demote"]).optional().describe("Single operation (omit when using operations[]). remove = wrong/superseded; demote = still useful, free room but keep recallable."),
           content: tool.schema.string().optional().describe("Entry text (add/replace)."),
-          old_text: tool.schema.string().optional().describe("Substring to match (replace/remove)."),
+          old_text: tool.schema.string().optional().describe("Substring to match (replace/remove/demote)."),
           operations: tool.schema
             .array(
               tool.schema.object({
-                action: tool.schema.enum(["add", "replace", "remove"]),
+                action: tool.schema.enum(["add", "replace", "remove", "demote"]),
                 content: tool.schema.string().optional(),
                 old_text: tool.schema.string().optional(),
               }),
@@ -265,11 +265,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
           try {
             if (Array.isArray(args.operations) && args.operations.length > 0) {
               const result = await store.applyBatch(target, args.operations as MemoryOperation[]);
-              if (result.success) {
-                for (const op of args.operations as MemoryOperation[]) {
-                  if (op.action === "add" || op.action === "replace") await manager.onMemoryWrite(op.action, op.content ?? "");
-                }
-              }
+              if (result.success) await manager.mirrorResolved(result.resolved);
               return JSON.stringify(result);
             }
             if (args.action === "add") {
@@ -279,11 +275,15 @@ const plugin: Plugin = async ({ client, project, directory }) => {
             }
             if (args.action === "replace") {
               const r = await store.replace(target, args.old_text ?? "", args.content ?? "");
-              if (r.success) await manager.onMemoryWrite("replace", args.content ?? "");
+              if (r.success) await manager.onMemoryWrite("replace", args.content ?? "", r.matched ?? args.old_text ?? "");
               return JSON.stringify(r);
             }
-            if (args.action === "remove") return JSON.stringify(await store.remove(target, args.old_text ?? ""));
-            return JSON.stringify({ success: false, error: "specify action (add|replace|remove) or a non-empty operations[]." });
+            if (args.action === "remove" || args.action === "demote") {
+              const r = await store.remove(target, args.old_text ?? "");
+              if (r.success) await manager.onMemoryWrite(args.action, r.matched ?? args.old_text ?? "");
+              return JSON.stringify(r);
+            }
+            return JSON.stringify({ success: false, error: "specify action (add|replace|remove|demote) or a non-empty operations[]." });
           } catch (err) {
             return JSON.stringify({ success: false, error: String(err) });
           }

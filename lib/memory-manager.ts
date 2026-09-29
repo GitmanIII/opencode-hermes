@@ -3,7 +3,8 @@
  * Mirrors Hermes' MemoryManager role: the built-in store is always present; an
  * optional provider adds automatic prefetch and an unbounded recall store.
  */
-import type { MemoryProvider, ProviderHit } from "./memory-provider.ts";
+import type { MemoryProvider, MemoryWriteAction, ProviderHit } from "./memory-provider.ts";
+import type { ResolvedOperation } from "./store.ts";
 
 export class MemoryManager {
   constructor(public readonly provider: MemoryProvider | null) {}
@@ -26,11 +27,25 @@ export class MemoryManager {
     }
   }
 
-  async onMemoryWrite(action: "add" | "replace" | "remove", content: string): Promise<void> {
+  async onMemoryWrite(action: MemoryWriteAction, content: string, oldText?: string): Promise<void> {
     try {
-      await this.provider?.onMemoryWrite(action, content);
+      await this.provider?.onMemoryWrite(action, content, oldText);
     } catch {
       /* best-effort */
+    }
+  }
+
+  /**
+   * Mirror every operation a store batch resolved to (exact entry text). Shared
+   * by the `memory` tool and the background/flush review so both paths keep the
+   * long-term store consistent with the capped files.
+   */
+  async mirrorResolved(resolved: ResolvedOperation[] | undefined): Promise<void> {
+    if (!resolved?.length) return;
+    for (const op of resolved) {
+      if (op.action === "add") await this.onMemoryWrite("add", op.content ?? op.matched);
+      else if (op.action === "replace") await this.onMemoryWrite("replace", op.content ?? "", op.matched);
+      else await this.onMemoryWrite(op.action, op.matched);
     }
   }
 
