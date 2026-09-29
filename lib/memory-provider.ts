@@ -22,6 +22,21 @@ export type ProviderHit = { id: string; text: string; score: number };
 /** Mirror actions for built-in memory writes (see `onMemoryWrite`). */
 export type MemoryWriteAction = "add" | "replace" | "remove" | "demote";
 
+/** Options for the optional `reconcile` ("dream") pass over the store. */
+export type ReconcileOptions = {
+  /** Returns true if the canonical fact supersedes (obsoletes) the note. */
+  judge?: (canonicalText: string, noteText: string) => Promise<boolean>;
+  /** Cosine similarity at/above which a note is treated as a duplicate. */
+  duplicateThreshold?: number;
+  /** Cosine similarity at/above which the judge (if any) is consulted. */
+  ambiguousThreshold?: number;
+  /** Physically delete tombstoned (superseded) notes afterwards (GC). */
+  hardDelete?: boolean;
+  now?: number;
+};
+
+export type ReconcileStats = { canonical: number; added: number; superseded: number; judged: number; removed: number };
+
 export interface MemoryProvider {
   readonly name: string;
   initialize(ctx: ProviderContext): Promise<void>;
@@ -44,6 +59,12 @@ export interface MemoryProvider {
   onMemoryWrite(action: MemoryWriteAction, content: string, oldText?: string): Promise<void>;
   /** Optional: providers that scope notes can track the active project. */
   setProject?(projectId: string | null): void;
+  /**
+   * Optional "dream": reconcile the store against the current canonical facts
+   * (built-in memory), superseding stale/duplicate notes. Bounded (canonical ×
+   * store scan); called on idle.
+   */
+  reconcile?(canonical: string[], opts?: ReconcileOptions): Promise<ReconcileStats>;
   shutdown(): void;
 }
 

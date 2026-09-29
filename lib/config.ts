@@ -23,6 +23,10 @@ export type HermesConfig = {
   /** Provider-specific options passed through to the provider's initialize(). */
   providerOptions: Record<string, unknown>;
   prefetchLimit: number;
+  /** Run the provider's idle reconciliation ("dream") when supported. */
+  dream: boolean;
+  /** Let the dream consult the model for ambiguous near-duplicate notes. */
+  dreamJudge: boolean;
 };
 
 export const HERMES_DEFAULTS: HermesConfig = {
@@ -32,6 +36,8 @@ export const HERMES_DEFAULTS: HermesConfig = {
   provider: "none",
   providerOptions: {},
   prefetchLimit: 5,
+  dream: true,
+  dreamJudge: false,
 };
 
 export function configFile(): string {
@@ -63,6 +69,16 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function boolValue(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(s)) return true;
+    if (["0", "false", "no", "off"].includes(s)) return false;
+  }
+  return undefined;
+}
+
 export function loadConfig(): HermesConfig {
   const file = readFileConfig();
   const env = process.env;
@@ -81,5 +97,7 @@ export function loadConfig(): HermesConfig {
         : HERMES_DEFAULTS.providerOptions,
     prefetchLimit:
       positiveInt(env.HERMES_OPENCODE_PREFETCH_LIMIT) ?? positiveInt(file.prefetchLimit) ?? HERMES_DEFAULTS.prefetchLimit,
+    dream: boolValue(env.HERMES_OPENCODE_DREAM) ?? boolValue(file.dream) ?? HERMES_DEFAULTS.dream,
+    dreamJudge: boolValue(env.HERMES_OPENCODE_DREAM_JUDGE) ?? boolValue(file.dreamJudge) ?? HERMES_DEFAULTS.dreamJudge,
   };
 }

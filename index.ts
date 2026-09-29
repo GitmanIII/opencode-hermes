@@ -4,8 +4,10 @@
  * Faithful to Hermes' built-in memory:
  *   - MEMORY.md + USER.md, injected WHOLE into the system prompt (frozen
  *     snapshot per session), char-capped.
- *   - a single `memory` tool (add/replace/remove + atomic batch).
+ *   - a single `memory` tool (add/replace/remove/demote + atomic batch).
  *   - a background review on session idle that writes memory and skills.
+ *   - an optional "dream" that reconciles the long-term provider store against
+ *     the current canonical facts (superseding stale/duplicate notes).
  * Skills (procedural memory) are managed with skill_* tools.
  */
 import * as fs from "node:fs";
@@ -16,6 +18,7 @@ import {
   clearSession,
   clearSessionState,
   runBackgroundReview,
+  runDream,
   runFlushReview,
   setDebugLogger,
 } from "./lib/learn.ts";
@@ -37,6 +40,8 @@ const CONFIG = loadConfig();
 const NUDGE_INTERVAL = CONFIG.nudgeInterval;
 const IDLE_DEBOUNCE_MS = 10_000;
 const REVIEW_MIN_INTERVAL_MS = 30 * 60 * 1000;
+const DREAM = CONFIG.dream;
+const DREAM_JUDGE = CONFIG.dreamJudge;
 
 const MEMORY_GUIDANCE =
   "You have persistent memory across sessions. The MEMORY and USER blocks above are your saved notes and the user's profile; keep them current with the `memory` tool. Reusable procedures belong in a skill, not memory.";
@@ -126,6 +131,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let lastIdleSession: string | null = null;
   let lastReviewAt = 0;
+  const dreamedSessions = new Set<string>();
 
   return {
     // ─── Whole-file memory injection ───
@@ -178,6 +184,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
           const info = (event.properties as { info?: { id?: string } } | undefined)?.info;
           if (info?.id) {
             sessionTurns.delete(info.id);
+            dreamedSessions.delete(info.id);
             clearSession(info.id);
             if (lastIdleSession === info.id) lastIdleSession = null;
           }
@@ -211,6 +218,13 @@ const plugin: Plugin = async ({ client, project, directory }) => {
                   body: { title: "opencode-hermes", message: `Saved ${result.savedCount} memory + ${result.savedSkills ?? 0} skill item(s)`, variant: "info", duration: 4000 },
                 })
                 .catch(() => {});
+            }
+            // Dream: reconcile the long-term store against current canonical memory
+            // (once per session, only when the active provider supports it).
+            if (DREAM && !dreamedSessions.has(sessionID)) {
+              dreamedSessions.add(sessionID);
+              const stats = await runDream(client, store, directory, manager, DREAM_JUDGE);
+              if (stats) log(`dream: canonical=${stats.canonical} added=${stats.added} superseded=${stats.superseded} judged=${stats.judged} removed=${stats.removed}`);
             }
           } catch (err) {
             log(`background review threw: ${String(err)}`);

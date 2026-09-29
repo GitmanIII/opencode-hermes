@@ -35,6 +35,9 @@ TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = y
 
 SKIP: trivial/obvious info, easily re-discovered facts, raw data dumps, task progress, completed-work logs, temporary TODO state. Reusable procedures belong in a skill, not memory.`;
 
+// ─── Dream: reconcile the long-term store against current canonical facts ───
+export const DREAM_JUDGE_SYSTEM_PROMPT = `You reconcile a long-term memory store against the user's current, canonical facts. You are given a CURRENT FACT (from the always-on memory) and an OLDER NOTE (from the long-term store). Answer YES if the older note is now obsolete, wrong, or fully redundant given the current fact; answer NO if it is still a distinct, valid fact. Answer with a single word: YES or NO.`;
+
 // ─── session_search guidance (Hermes) ───
 export const SESSION_SEARCH_GUIDANCE =
   "When the user references something from a past conversation or you suspect relevant cross-session context exists, use session_search to recall it before asking them to repeat themselves.";

@@ -11,6 +11,7 @@ A faithful, local port of [Hermes](https://github.com/weaigc/hermes)' built-in m
 - **Session recall** — `session_search` reads OpenCode's own session database (read-only) to find and read past conversations (discovery / read / scroll / browse; actual messages, no LLM). A system-prompt nudge tells the model to use it when the user references the past.
 - **External memory provider (optional, one)** — `provider: "sqlite"` adds an unbounded local note store with **automatic prefetch** (relevant notes injected before each turn). It mirrors built-in writes: `add`/`replace` store the current fact (a replace deletes the superseded one), `remove` propagates the deletion, and `demote` evicts a fact from the capped file while keeping it recallable. Off by default (Hermes ships built-in-only).
 - **Skills (procedural memory)** — `skill_list` / `skill_view` / `skill_manage` / `skill_curate` / `skill_restore`, with validation, guards (the review may only edit agent-created skills), and a stale/archive lifecycle.
+- **Dream (idle reconciliation)** — when a provider is active, an idle pass compares its store against the current `MEMORY.md`/`USER.md` and **tombstones** notes made obsolete by a canonical fact (they stop being recalled); an optional model judge resolves ambiguous near-duplicates. `dream` on by default, `dreamJudge` off.
 - **Robust writes** — atomic temp+rename with SHA-256 fingerprint conflict detection and retry (safe for multiple concurrent OpenCode processes).
 
 ## Requirements
@@ -53,6 +54,8 @@ Precedence: **environment variables > config file > defaults**. Defaults match H
 | `HERMES_OPENCODE_PROVIDER` | `none` | external long-term memory provider: `none` \| `sqlite` |
 | `HERMES_OPENCODE_PROVIDER_PATH` | `<memory root>/provider.sqlite` | provider store path |
 | `HERMES_OPENCODE_PREFETCH_LIMIT` | `5` | provider notes injected per turn |
+| `HERMES_OPENCODE_DREAM` | `true` | idle reconciliation of the provider store against canonical memory |
+| `HERMES_OPENCODE_DREAM_JUDGE` | `false` | let the dream ask the model about ambiguous near-duplicates |
 | `HERMES_OPENCODE_CONFIG` | `~/.config/opencode/opencode-hermes.json` | config file path |
 
 Or put the same keys in `~/.config/opencode/opencode-hermes.json` (JSON or JSONC):
@@ -107,7 +110,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 bun run test
 ```
 
-147 hermetic checks (no model, no network): store semantics, injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, config.
+149 hermetic checks (no model, no network): store semantics, injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, config.
 
 ## Attribution & License
 

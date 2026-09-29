@@ -3,7 +3,7 @@
  * Mirrors Hermes' MemoryManager role: the built-in store is always present; an
  * optional provider adds automatic prefetch and an unbounded recall store.
  */
-import type { MemoryProvider, MemoryWriteAction, ProviderHit } from "./memory-provider.ts";
+import type { MemoryProvider, MemoryWriteAction, ProviderHit, ReconcileOptions, ReconcileStats } from "./memory-provider.ts";
 import type { ResolvedOperation } from "./store.ts";
 
 export class MemoryManager {
@@ -54,6 +54,16 @@ export class MemoryManager {
   }
   async search(query: string, limit?: number): Promise<ProviderHit[]> {
     return this.provider ? await this.provider.search(query, limit) : [];
+  }
+
+  /** Run the provider's optional "dream" reconciliation; undefined if unsupported. */
+  async reconcile(canonical: string[], opts?: ReconcileOptions): Promise<ReconcileStats | undefined> {
+    if (!this.provider?.reconcile) return undefined;
+    try {
+      return await this.provider.reconcile(canonical, opts);
+    } catch {
+      return undefined;
+    }
   }
   async forget(id: string): Promise<boolean | undefined> {
     return this.provider ? await this.provider.forget(id) : undefined;

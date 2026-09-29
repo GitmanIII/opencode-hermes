@@ -121,6 +121,16 @@ const amgr = new MemoryManager(asyncProvider as never);
 assert("manager awaits async provider search", (await amgr.search("q")).length === 1);
 assert("manager awaits async provider add", (await amgr.add("x"))?.id === "id1");
 
+// Dream: the manager exposes the provider's optional reconcile; no-op without one.
+const recProvider = {
+  ...asyncProvider,
+  reconcile: async (canonical: string[]) => ({ canonical: canonical.length, added: 1, superseded: 1, judged: 0, removed: 0 }),
+};
+const recMgr = new MemoryManager(recProvider as never);
+const rstats = await recMgr.reconcile(["a", "b"]);
+assert("manager exposes provider reconcile", rstats?.canonical === 2 && rstats?.superseded === 1, JSON.stringify(rstats));
+assert("manager reconcile is a no-op without a provider", (await new MemoryManager(null).reconcile(["a"])) === undefined);
+
 await fs.rm(TMP, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

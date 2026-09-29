@@ -10,10 +10,12 @@ import { completeWithInternalSession, isInternalSession } from "./llm.ts";
 import {
   DIRECT_FLUSH_SYSTEM_PROMPT,
   DIRECT_REVIEW_SYSTEM_PROMPT,
+  DREAM_JUDGE_SYSTEM_PROMPT,
   REVIEW_USER_PROMPT,
 } from "./prompts.ts";
 import { applySkillOperations, listSkills, type SkillOperation } from "./skills.ts";
 import type { MemoryManager } from "./memory-manager.ts";
+import type { ReconcileStats } from "./memory-provider.ts";
 import type { MemoryOperation, MemoryStore, Target } from "./store.ts";
 
 // ─── Operations extraction from LLM JSON output ───
@@ -208,6 +210,38 @@ export async function runFlushReview(
   } catch (err) {
     return { savedCount: 0, error: String(err) };
   }
+}
+
+// ─── Dream: reconcile the long-term store against current canonical memory ───
+
+/**
+ * Bounded idle reconciliation. The provider compares the current canonical
+ * facts (MEMORY.md + USER.md) against its store and supersedes stale/duplicate
+ * notes. With `useJudge`, an ambiguous band is resolved by asking the model.
+ * Returns undefined when no provider supports `reconcile`.
+ */
+export async function runDream(
+  client: PluginInput["client"],
+  store: MemoryStore,
+  directory: string,
+  manager?: MemoryManager | null,
+  useJudge = false,
+): Promise<ReconcileStats | undefined> {
+  if (!manager?.provider?.reconcile) return undefined;
+  const canonical = [...store.getEntries("memory"), ...store.getEntries("user")].filter(Boolean);
+  if (!canonical.length) return undefined;
+  const judge = useJudge
+    ? async (canonicalText: string, noteText: string) => {
+        const out = await completeWithInternalSession(
+          client,
+          directory,
+          DREAM_JUDGE_SYSTEM_PROMPT,
+          `CURRENT FACT:\n${canonicalText}\n\nOLDER NOTE:\n${noteText}\n\nAnswer with one word: YES or NO.`,
+        );
+        return /^\s*yes/i.test(out.text ?? "");
+      }
+    : undefined;
+  return manager.reconcile(canonical, { judge });
 }
 
 export function clearSession(sessionID: string): void {
