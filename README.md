@@ -1,0 +1,91 @@
+# opencode-hermes
+
+A faithful, local port of [Hermes](https://github.com/weaigc/hermes)' built-in memory to [OpenCode](https://opencode.ai) — plus skill authoring. Two Markdown files, injected whole, a single `memory` tool, and a self-learning review. No vector database, no external service.
+
+## Design (Hermes core)
+
+- **Two files, injected whole** — `MEMORY.md` (your notes) and `USER.md` (the user profile) are rendered into the system prompt every session, with Hermes' headers and a per-session frozen snapshot. No retrieval.
+- **Hard char caps** — `MEMORY.md` 2200, `USER.md` 1375 (Hermes defaults), configurable.
+- **One `memory` tool** — `target: memory|user`, `action: add|replace|remove`, plus an atomic batch (`operations[]`). Adds are idempotent; the budget is checked only on the final batch result, and an over-budget write returns a *consolidate-and-retry* error rather than silently dropping anything.
+- **Self-learning review** — after N turns, on session idle, a review pass reads the conversation and writes memory **and** skills.
+- **Session recall** — `session_search` reads OpenCode's own session database (read-only) to find and read past conversations (discovery / read / scroll / browse; actual messages, no LLM). A system-prompt nudge tells the model to use it when the user references the past.
+- **External memory provider (optional, one)** — `provider: "sqlite"` adds an unbounded local note store with **automatic prefetch** (relevant notes injected before each turn) and mirrors built-in memory writes, so facts that age out of the capped files stay recallable. Off by default (Hermes ships built-in-only).
+- **Skills (procedural memory)** — `skill_list` / `skill_view` / `skill_manage` / `skill_curate` / `skill_restore`, with validation, guards (the review may only edit agent-created skills), and a stale/archive lifecycle.
+- **Robust writes** — atomic temp+rename with SHA-256 fingerprint conflict detection and retry (safe for multiple concurrent OpenCode processes).
+
+## Requirements
+
+- OpenCode >= 1.18
+- Bun (for local plugin loading and tests)
+
+## Install
+
+```bash
+git clone https://github.com/GitmanIII/opencode-hermes.git ~/opencode-hermes
+cd ~/opencode-hermes
+bun install
+```
+
+Add the plugin to `~/.config/opencode/opencode.jsonc`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:///home/YOU/opencode-hermes/plugin.ts"]
+}
+```
+
+Restart OpenCode. The memory store is created on first run.
+
+## Configuration
+
+Precedence: **environment variables > config file > defaults**. Defaults match Hermes.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HERMES_OPENCODE_MEMORY_ROOT` | `~/.config/opencode/memories` | memory store root (`MEMORY.md`, `USER.md`) |
+| `HERMES_OPENCODE_SKILLS_ROOT` | `~/.agents/skills` | skills root (scanned by OpenCode) |
+| `HERMES_OPENCODE_MEMORY_LIMIT` | `2200` | `MEMORY.md` char limit |
+| `HERMES_OPENCODE_USER_LIMIT` | `1375` | `USER.md` char limit |
+| `HERMES_NUDGE_INTERVAL` | `10` | turns between background reviews |
+| `HERMES_OPENCODE_LOG` | `~/.local/share/opencode/log/opencode-hermes.log` | log file |
+| `HERMES_OPENCODE_SESSIONS_DB` | `~/.local/share/opencode/opencode.db` | session DB for `session_search` (read-only) |
+| `HERMES_OPENCODE_PROVIDER` | `none` | external long-term memory provider: `none` \| `sqlite` |
+| `HERMES_OPENCODE_PROVIDER_PATH` | `<memory root>/provider.sqlite` | provider store path |
+| `HERMES_OPENCODE_PREFETCH_LIMIT` | `5` | provider notes injected per turn |
+| `HERMES_OPENCODE_CONFIG` | `~/.config/opencode/opencode-hermes.json` | config file path |
+
+Or put the same keys in `~/.config/opencode/opencode-hermes.json` (JSON or JSONC):
+
+```jsonc
+{
+  "memoryCharLimit": 2200,
+  "userCharLimit": 1375,
+  "nudgeInterval": 10
+}
+```
+
+## Tools
+
+`memory` · `session_search` · `provider_memory` (when a provider is active) · `skill_list` · `skill_view` · `skill_manage` · `skill_curate` · `skill_restore`
+
+## How it works
+
+- Entries are `§`-delimited (same as Hermes). There is no per-entry metadata.
+- At session start the two files are rendered into the system prompt (frozen for the session; refreshed when a new session starts).
+- Every N user turns, on idle, a review pass builds a transcript, asks the model for JSON `{ operations, skills }`, and applies them (memory as atomic per-target batches, skills with the agent guard).
+- Before compaction, a shorter flush review saves what matters.
+- `session_search` is model-invoked (not automatic): the guidance + tool description tell it to recall past sessions when relevant, then it returns stored messages from the session DB.
+- The optional **provider** is automatic: after each user message it prefetches relevant notes and injects them; `provider_memory` adds/searches notes. One provider at a time; implement `MemoryProvider` (`lib/memory-provider.ts`) for a different backend (e.g. embeddings).
+
+## Testing
+
+```bash
+bun run test
+```
+
+103 hermetic checks (no model, no network): store semantics, injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, config.
+
+## Attribution & License
+
+MIT. The memory core is derived from [opencode-hermes-memory](https://github.com/realchendahuang/opencode-hermes-memory) (© 2026 realchendahuang, MIT), itself a port of the Hermes memory system. The skills subsystem, review integration, curation, and fixes are original to this project (GitmanIII). See [LICENSE](LICENSE).

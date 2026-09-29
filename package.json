@@ -1,0 +1,44 @@
+{
+  "name": "opencode-hermes",
+  "version": "1.0.0",
+  "description": "Hermes-style persistent memory + skills for OpenCode: layered Markdown memory, self-learning review, skill authoring, and curation.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    "./server": "./index.ts"
+  },
+  "keywords": ["opencode-plugin", "opencode", "memory", "agent-memory", "skills", "self-learning"],
+  "files": ["index.ts", "plugin.ts", "lib/*.ts", "README.md", "LICENSE"],
+  "repository": { "type": "git", "url": "git+https://github.com/GitmanIII/opencode-hermes.git" },
+  "homepage": "https://github.com/GitmanIII/opencode-hermes#readme",
+  "bugs": { "url": "https://github.com/GitmanIII/opencode-hermes/issues" },
+  "author": "GitmanIII",
+  "scripts": {
+    "test": "bun run lib/tests/regression.ts && bun run lib/tests/loop.ts && bun run lib/tests/plugin-harness.ts && bun run lib/tests/self-learning.ts && bun run lib/tests/skills.ts && bun run lib/tests/learning-efficacy.ts && bun run lib/tests/token-cost.ts && bun run lib/tests/curation.ts && bun run lib/tests/config.ts && bun run lib/tests/session-search.ts && bun run lib/tests/provider.ts",
+    "test:regression": "bun run lib/tests/regression.ts",
+    "test:loop": "bun run lib/tests/loop.ts",
+    "test:wiring": "bun run lib/tests/plugin-harness.ts",
+    "test:learning": "bun run lib/tests/self-learning.ts",
+    "test:skills": "bun run lib/tests/skills.ts",
+    "test:efficacy": "bun run lib/tests/learning-efficacy.ts",
+    "test:cost": "bun run lib/tests/token-cost.ts",
+    "test:curation": "bun run lib/tests/curation.ts",
+    "test:config": "bun run lib/tests/config.ts",
+    "test:sessions": "bun run lib/tests/session-search.ts",
+    "test:provider": "bun run lib/tests/provider.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0",
+    "opencode": ">=1.18.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.18.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.0",
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,75 @@
+/**
+ * opencode-hermes — configuration.
+ *
+ * Precedence (highest first): environment variables > config file > defaults.
+ * Config file: ~/.config/opencode/opencode-hermes.json (JSON or JSONC),
+ * override path with HERMES_OPENCODE_CONFIG.
+ *
+ * Memory-limit defaults match Hermes' built-in memory (tools/memory_tool.py):
+ *   memory_char_limit = 2200, user_char_limit = 1375.
+ * `provider` selects the optional external long-term-memory backend
+ * ("none" | "sqlite"); Hermes ships built-in-only by default.
+ */
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+export type HermesConfig = {
+  memoryCharLimit: number;
+  userCharLimit: number;
+  nudgeInterval: number;
+  provider: string;
+  providerPath?: string;
+  prefetchLimit: number;
+};
+
+export const HERMES_DEFAULTS: HermesConfig = {
+  memoryCharLimit: 2200,
+  userCharLimit: 1375,
+  nudgeInterval: 10,
+  provider: "none",
+  prefetchLimit: 5,
+};
+
+export function configFile(): string {
+  return process.env.HERMES_OPENCODE_CONFIG ?? path.join(os.homedir(), ".config", "opencode", "opencode-hermes.json");
+}
+
+function stripJsonc(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/[^\n]*/g, "$1");
+}
+
+function readFileConfig(): Partial<HermesConfig> {
+  try {
+    const parsed = JSON.parse(stripJsonc(fs.readFileSync(configFile(), "utf-8")));
+    return parsed && typeof parsed === "object" ? (parsed as Partial<HermesConfig>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function positiveInt(value: unknown): number | undefined {
+  const n = typeof value === "string" ? Number(value) : typeof value === "number" ? value : undefined;
+  return n !== undefined && Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function loadConfig(): HermesConfig {
+  const file = readFileConfig();
+  const env = process.env;
+  return {
+    memoryCharLimit:
+      positiveInt(env.HERMES_OPENCODE_MEMORY_LIMIT) ?? positiveInt(file.memoryCharLimit) ?? HERMES_DEFAULTS.memoryCharLimit,
+    userCharLimit:
+      positiveInt(env.HERMES_OPENCODE_USER_LIMIT) ?? positiveInt(file.userCharLimit) ?? HERMES_DEFAULTS.userCharLimit,
+    nudgeInterval:
+      positiveInt(env.HERMES_NUDGE_INTERVAL) ?? positiveInt(file.nudgeInterval) ?? HERMES_DEFAULTS.nudgeInterval,
+    provider: stringValue(env.HERMES_OPENCODE_PROVIDER) ?? stringValue(file.provider) ?? HERMES_DEFAULTS.provider,
+    providerPath: stringValue(env.HERMES_OPENCODE_PROVIDER_PATH) ?? stringValue(file.providerPath),
+    prefetchLimit:
+      positiveInt(env.HERMES_OPENCODE_PREFETCH_LIMIT) ?? positiveInt(file.prefetchLimit) ?? HERMES_DEFAULTS.prefetchLimit,
+  };
+}
