@@ -329,12 +329,15 @@ const plugin: Plugin = async ({ client, project, directory }) => {
           if (!manager.provider) return JSON.stringify({ success: false, error: `no memory provider active (config provider=${CONFIG.provider})` });
           try {
             if (args.action === "add") {
-              const r = manager.add(args.content ?? "", args.tags);
+              const r = await manager.add(args.content ?? "", args.tags);
               return JSON.stringify({ success: true, id: r?.id });
             }
-            if (args.action === "search") return JSON.stringify({ success: true, query: args.query ?? "", results: manager.search(args.query ?? "", args.limit) });
+            if (args.action === "search") {
+              const results = await manager.search(args.query ?? "", args.limit);
+              return JSON.stringify({ success: true, query: args.query ?? "", count: results.length, results });
+            }
             if (args.action === "forget") {
-              manager.forget(args.id ?? "");
+              await manager.forget(args.id ?? "");
               return JSON.stringify({ success: true });
             }
             return JSON.stringify({ success: false, error: `unknown action '${args.action}'.` });

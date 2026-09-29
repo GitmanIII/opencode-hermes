@@ -34,14 +34,14 @@ export class MemoryManager {
     }
   }
 
-  add(content: string, tags?: string[]): { id: string } | undefined {
-    return this.provider?.add(content, tags);
+  async add(content: string, tags?: string[]): Promise<{ id: string } | undefined> {
+    return this.provider ? await this.provider.add(content, tags) : undefined;
   }
-  search(query: string, limit?: number): ProviderHit[] {
-    return this.provider?.search(query, limit) ?? [];
+  async search(query: string, limit?: number): Promise<ProviderHit[]> {
+    return this.provider ? await this.provider.search(query, limit) : [];
   }
-  forget(id: string): boolean | undefined {
-    return this.provider?.forget(id);
+  async forget(id: string): Promise<boolean | undefined> {
+    return this.provider ? await this.provider.forget(id) : undefined;
   }
 
   shutdown(): void {

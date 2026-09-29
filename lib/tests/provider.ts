@@ -69,8 +69,26 @@ const p2 = new SqliteMemoryProvider();
 await p2.initialize({ memoryRoot: TMP, providerPath, prefetchLimit: 5 });
 const mgr = new MemoryManager(p2);
 assert("manager prefetches when a provider is active", (await mgr.prefetch("birdnet doves")).includes("provider-memory"));
-assert("manager mirrors writes", (await mgr.onMemoryWrite("add", "manager mirrored note"), mgr.search("mirrored").length) === 1);
+await mgr.onMemoryWrite("add", "manager mirrored note");
+assert("manager mirrors writes", (await mgr.search("mirrored")).length === 1);
 mgr.shutdown();
+
+// Regression: manager must AWAIT async providers (embeddings), not return a Promise,
+// else the provider_memory tool JSON.stringifies a Promise to "{}".
+const asyncProvider = {
+  name: "asyncfake",
+  initialize: async () => {},
+  systemPromptBlock: () => "",
+  prefetch: async () => ({ text: "", hits: 0 }),
+  add: async () => ({ id: "id1" }),
+  search: async () => [{ id: "id1", text: "x", score: 1 }],
+  forget: async () => true,
+  onMemoryWrite: async () => {},
+  shutdown: () => {},
+};
+const amgr = new MemoryManager(asyncProvider as never);
+assert("manager awaits async provider search", (await amgr.search("q")).length === 1);
+assert("manager awaits async provider add", (await amgr.add("x"))?.id === "id1");
 
 await fs.rm(TMP, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
