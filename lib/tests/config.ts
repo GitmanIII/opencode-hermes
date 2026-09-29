@@ -56,6 +56,12 @@ await fs.writeFile(cfgPath, `{\n  // comment tolerated\n  "userCharLimit": 900,\
 process.env.HERMES_OPENCODE_CONFIG = cfgPath;
 assert("file overrides user limit", loadConfig().userCharLimit === 900, String(loadConfig().userCharLimit));
 assert("file overrides nudge", loadConfig().nudgeInterval === 3, String(loadConfig().nudgeInterval));
+
+// regression: JSONC stripper must not eat `file:///` URLs or inline comments
+await fs.writeFile(cfgPath, `{\n  "provider": "file:///home/me/opencode-hermes-embeddings/src/provider.ts", // inline\n  "providerOptions": { "endpoint": "http://127.0.0.1:8080" }\n}\n`, "utf-8");
+const urlCfg = loadConfig();
+assert("file:// provider URL survives JSONC strip", urlCfg.provider === "file:///home/me/opencode-hermes-embeddings/src/provider.ts", urlCfg.provider);
+assert("nested providerOptions parse", (urlCfg.providerOptions as { endpoint?: string }).endpoint === "http://127.0.0.1:8080", JSON.stringify(urlCfg.providerOptions));
 process.env.HERMES_OPENCODE_USER_LIMIT = "777";
 assert("env beats file", loadConfig().userCharLimit === 777, String(loadConfig().userCharLimit));
 delete process.env.HERMES_OPENCODE_USER_LIMIT;

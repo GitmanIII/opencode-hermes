@@ -39,7 +39,10 @@ export function configFile(): string {
 }
 
 function stripJsonc(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/[^\n]*/g, "$1");
+  // Strip /* */ and // comments. A // only starts a line comment at line start
+  // or after whitespace — otherwise it's part of a value such as file:///path
+  // (the naive "not preceded by : \" '" form truncated URLs).
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[ \t])\/\/[^\n]*/gm, "$1");
 }
 
 function readFileConfig(): Partial<HermesConfig> {
