@@ -33,6 +33,9 @@ for (const k of ENV_KEYS) {
   saved[k] = process.env[k];
   delete process.env[k];
 }
+// Hermetic: point at a non-existent config so defaults checks never read the
+// user's real ~/.config/opencode/opencode-hermes.json.
+process.env.HERMES_OPENCODE_CONFIG = path.join(os.tmpdir(), `hermes-cfg-missing-${process.pid}.json`);
 
 assert("default memory limit is 2200 (Hermes)", HERMES_DEFAULTS.memoryCharLimit === 2200);
 assert("default user limit is 1375 (Hermes)", HERMES_DEFAULTS.userCharLimit === 1375);
