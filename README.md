@@ -32,7 +32,7 @@ Add the plugin to `~/.config/opencode/opencode.jsonc`:
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///home/YOU/opencode-hermes/plugin.ts"]
+  "plugin": ["file:///home/you/opencode-hermes/plugin.ts"]
 }
 ```
 
