@@ -20,6 +20,8 @@ export type HermesConfig = {
   nudgeInterval: number;
   provider: string;
   providerPath?: string;
+  /** Provider-specific options passed through to the provider's initialize(). */
+  providerOptions: Record<string, unknown>;
   prefetchLimit: number;
 };
 
@@ -28,6 +30,7 @@ export const HERMES_DEFAULTS: HermesConfig = {
   userCharLimit: 1375,
   nudgeInterval: 10,
   provider: "none",
+  providerOptions: {},
   prefetchLimit: 5,
 };
 
@@ -69,6 +72,10 @@ export function loadConfig(): HermesConfig {
       positiveInt(env.HERMES_NUDGE_INTERVAL) ?? positiveInt(file.nudgeInterval) ?? HERMES_DEFAULTS.nudgeInterval,
     provider: stringValue(env.HERMES_OPENCODE_PROVIDER) ?? stringValue(file.provider) ?? HERMES_DEFAULTS.provider,
     providerPath: stringValue(env.HERMES_OPENCODE_PROVIDER_PATH) ?? stringValue(file.providerPath),
+    providerOptions:
+      file.providerOptions && typeof file.providerOptions === "object"
+        ? (file.providerOptions as Record<string, unknown>)
+        : HERMES_DEFAULTS.providerOptions,
     prefetchLimit:
       positiveInt(env.HERMES_OPENCODE_PREFETCH_LIMIT) ?? positiveInt(file.prefetchLimit) ?? HERMES_DEFAULTS.prefetchLimit,
   };

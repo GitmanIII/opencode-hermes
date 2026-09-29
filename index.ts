@@ -24,7 +24,7 @@ import { loadConfig } from "./lib/config.ts";
 import { MEMORY_TOOL_DESCRIPTION, SESSION_SEARCH_GUIDANCE, SESSION_SEARCH_TOOL_DESCRIPTION } from "./lib/prompts.ts";
 import { sessionSearch, sessionsDbPath } from "./lib/session-search.ts";
 import { memoryRoot, skillsRoot } from "./lib/paths.ts";
-import { createProvider } from "./lib/memory-provider.ts";
+import { loadProvider, type MemoryProvider } from "./lib/memory-provider.ts";
 import { MemoryManager } from "./lib/memory-manager.ts";
 import { type MemoryOperation, MemoryStore, type Target } from "./lib/store.ts";
 import { curateSkills, listSkills, manageSkill, restoreSkill, viewSkill } from "./lib/skills.ts";
@@ -94,22 +94,28 @@ const plugin: Plugin = async ({ client, project, directory }) => {
   await store.loadFromDisk().catch((err) => log(`store load failed: ${String(err)}`));
   setDebugLogger((msg) => log(msg));
 
-  const provider = createProvider(CONFIG.provider);
-  if (provider) {
-    try {
+  const currentProject = projectIdOf(project, directory);
+  let provider: MemoryProvider | null = null;
+  try {
+    provider = await loadProvider(CONFIG.provider, CONFIG.providerOptions);
+    if (provider) {
       await provider.initialize({
         memoryRoot: memoryRoot(),
         providerPath: CONFIG.providerPath ?? path.join(memoryRoot(), "provider.sqlite"),
         prefetchLimit: CONFIG.prefetchLimit,
+        options: CONFIG.providerOptions,
+        projectId: currentProject,
       });
-    } catch (err) {
-      log(`provider '${CONFIG.provider}' init failed: ${String(err)}`);
+      provider.setProject?.(currentProject);
     }
+  } catch (err) {
+    log(`provider '${CONFIG.provider}' init failed: ${String(err)}`);
+    provider = null;
   }
   const manager = new MemoryManager(provider);
 
   log(
-    `initialized (project=${projectIdOf(project, directory)}, dir=${directory}) config: memory=${CONFIG.memoryCharLimit} user=${CONFIG.userCharLimit} nudge=${CONFIG.nudgeInterval} provider=${manager.activeName()}`,
+    `initialized (project=${currentProject}, dir=${directory}) config: memory=${CONFIG.memoryCharLimit} user=${CONFIG.userCharLimit} nudge=${CONFIG.nudgeInterval} provider=${manager.activeName()}`,
   );
 
   // Frozen system-prompt snapshot (Hermes): writes persist to disk but the
