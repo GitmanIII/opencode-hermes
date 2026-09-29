@@ -78,6 +78,29 @@ Or put the same keys in `~/.config/opencode/opencode-hermes.json` (JSON or JSONC
 - `session_search` is model-invoked (not automatic): the guidance + tool description tell it to recall past sessions when relevant, then it returns stored messages from the session DB.
 - The optional **provider** is automatic: after each user message it prefetches relevant notes and injects them; `provider_memory` adds/searches notes. One provider at a time; implement `MemoryProvider` (`lib/memory-provider.ts`) for a different backend (e.g. embeddings).
 
+## External memory providers
+
+`provider` accepts a **module spec**, not just the built-ins (`none`, `sqlite`):
+
+- a `file://` URL / path to a module exporting `createProvider(options)` or a default factory, or
+- an npm package name.
+
+Provider options go under `providerOptions`; `initialize()` receives `{ memoryRoot, providerPath, prefetchLimit, options, projectId }`. One provider at a time. It's used for **automatic prefetch** (before each user message), **mirrors built-in memory writes**, and backs the `provider_memory` tool. Providers that scope notes can implement `setProject(id)`.
+
+**Companion:** [**opencode-hermes-embeddings**](https://github.com/GitmanIII/opencode-hermes-embeddings) — semantic recall on your own GPU via HuggingFace **text-embeddings-inference** (`nomic-embed-text-v1.5`, 768-dim), project-scoped.
+
+```jsonc
+{
+  "provider": "file:///home/you/opencode-hermes-embeddings/src/provider.ts",
+  "providerOptions": {
+    "endpoint": "http://127.0.0.1:8080",
+    "model": "nomic-ai/nomic-embed-text-v1.5",
+    "topK": 5,
+    "minScore": 0.35
+  }
+}
+```
+
 ## Testing
 
 ```bash
