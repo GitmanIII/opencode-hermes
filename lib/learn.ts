@@ -83,21 +83,28 @@ export async function applyOperations(
   store: MemoryStore,
   operations: MemoryOperation[],
   manager?: MemoryManager | null,
-): Promise<{ errors: string[] }> {
+): Promise<{ errors: string[]; applied: number }> {
   const errors: string[] = [];
+  let applied = 0;
   const byTarget = new Map<Target, MemoryOperation[]>();
   for (const op of operations) {
     const t = ((op as { target?: Target }).target ?? "memory") as Target;
-    if (t !== "memory" && t !== "user") continue;
+    if (t !== "memory" && t !== "user") {
+      errors.push(`memory operation ignored: invalid target '${String((op as { target?: unknown }).target)}'`);
+      continue;
+    }
     if (!byTarget.has(t)) byTarget.set(t, []);
     byTarget.get(t)!.push(op);
   }
   for (const [target, ops] of byTarget) {
     const result = await store.applyBatch(target, ops);
     if (!result.success) errors.push(`${target}: ${result.error}`);
-    else if (manager) await manager.mirrorResolved(result.resolved);
+    else {
+      applied += result.resolved?.length ?? ops.length;
+      if (manager) await manager.mirrorResolved(result.resolved);
+    }
   }
-  return { errors };
+  return { errors, applied };
 }
 
 // ─── Background review (session.idle) ───
@@ -159,14 +166,15 @@ export async function runBackgroundReview(
     if (error) return { savedCount: 0, error };
     reviewedUpTo.set(sessionID, all.length);
 
-    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[] };
+    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[], applied: 0 };
     const skillOps = skillsRoot ? skills : [];
     const appliedSkills = skillOps.length
       ? await applySkillOperations(skillsRoot!, skillOps, { origin: "agent" })
       : { errors: [] as string[], applied: 0 };
     const errs = [...applied.errors, ...appliedSkills.errors];
+    if (!applied.applied && !appliedSkills.applied) debug(`review for session ${sessionID} produced no applicable operations`);
     return {
-      savedCount: operations.length - applied.errors.length + appliedSkills.applied,
+      savedCount: applied.applied + appliedSkills.applied,
       savedSkills: appliedSkills.applied,
       error: errs.join("; ") || undefined,
     };
@@ -196,14 +204,14 @@ export async function runFlushReview(
 
     const { operations, skills, error } = extractOperations(completion.text);
     if (error) return { savedCount: 0, error };
-    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[] };
+    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[], applied: 0 };
     const skillOps = skillsRoot ? skills : [];
     const appliedSkills = skillOps.length
       ? await applySkillOperations(skillsRoot!, skillOps, { origin: "agent" })
       : { errors: [] as string[], applied: 0 };
     const errs = [...applied.errors, ...appliedSkills.errors];
     return {
-      savedCount: operations.length - applied.errors.length + appliedSkills.applied,
+      savedCount: applied.applied + appliedSkills.applied,
       savedSkills: appliedSkills.applied,
       error: errs.join("; ") || undefined,
     };
@@ -259,7 +267,6 @@ export function setDebugLogger(fn: (msg: string) => void): void {
 function debug(msg: string): void {
   debugLogger?.(msg);
 }
-void debug;
 
 // ─── Transcript builder ───
 

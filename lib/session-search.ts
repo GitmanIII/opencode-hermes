@@ -105,9 +105,11 @@ export function sessionSearch(dbPath: string, params: SessionSearchParams = {}):
 
 function discoveryShape(db: Database, query: string, limit: number): SessionSearchResult {
   const like = `%${escapeLike(query)}%`;
+  type DiscoveryRow = Row & { title: string | null; directory: string | null; time_updated: number | null };
   const rows = db
     .query(
-      `SELECT p.id AS id, p.session_id AS session_id, p.message_id AS message_id, p.data AS data, p.time_created AS time_created
+      `SELECT p.id AS id, p.session_id AS session_id, p.message_id AS message_id, p.data AS data, p.time_created AS time_created,
+              s.title AS title, s.directory AS directory, s.time_updated AS time_updated
        FROM part p
        JOIN session s ON s.id = p.session_id
        WHERE s.parent_id IS NULL
@@ -116,7 +118,7 @@ function discoveryShape(db: Database, query: string, limit: number): SessionSear
        ORDER BY p.time_created DESC
        LIMIT ?`,
     )
-    .all(like, SCAN_LIMIT) as Row[];
+    .all(like, SCAN_LIMIT) as DiscoveryRow[];
 
   const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
   type Hit = { session: { id: string; title: string; directory: string; time: number }; score: number; matches: { message_id: string; time: number; text: string }[] };
@@ -135,11 +137,13 @@ function discoveryShape(db: Database, query: string, limit: number): SessionSear
       }
     }
     if (score === 0) continue;
-    const meta = db.query(`SELECT title, directory, time_updated FROM session WHERE id = ?`).get(row.session_id) as
-      | { title: string; directory: string; time_updated: number }
-      | null;
     const hit = bySession.get(row.session_id) ?? {
-      session: { id: row.session_id, title: meta?.title ?? "(untitled)", directory: meta?.directory ?? "", time: meta?.time_updated ?? row.time_created },
+      session: {
+        id: row.session_id,
+        title: row.title ?? "(untitled)",
+        directory: row.directory ?? "",
+        time: row.time_updated ?? row.time_created,
+      },
       score: 0,
       matches: [],
     };

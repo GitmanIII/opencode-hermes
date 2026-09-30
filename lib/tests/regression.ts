@@ -32,6 +32,7 @@ assert("empty store loads", store.entryCount("memory") === 0 && store.entryCount
 // add / idempotent duplicate
 let r = await store.add("memory", "durable fact A");
 assert("add succeeds", r.success && store.entryCount("memory") === 1);
+assert("add response reports post-write counters", r.entry_count === 1 && (r.usage ?? "").includes("(1 entries)"), JSON.stringify({ entry_count: r.entry_count, usage: r.usage }));
 r = await store.add("memory", "durable fact A");
 assert("duplicate add is idempotent", r.success && (r.message ?? "").includes("already exists") && store.entryCount("memory") === 1, r.message);
 r = await store.add("memory", "   ");
@@ -92,6 +93,21 @@ assert("per-turn failure cap is terminal", !!terminal?.done, JSON.stringify(term
 setMemoryRoot(TMP);
 await fs.rm(SMALLTMP, { recursive: true, force: true });
 
+// concurrent mutations are serialized: no lost updates (review racing a tool call)
+const CONCTMP = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-reg-conc-"));
+setMemoryRoot(CONCTMP);
+const conc = new MemoryStore({ memoryCharLimit: 10_000 });
+await conc.loadFromDisk();
+await Promise.all([conc.add("memory", "conc A"), conc.add("memory", "conc B"), conc.add("memory", "conc C")]);
+const diskConc = splitEntries(await fs.readFile(path.join(CONCTMP, "MEMORY.md"), "utf-8"));
+assert(
+  "concurrent adds don't drop writes",
+  ["conc A", "conc B", "conc C"].every((e) => diskConc.includes(e)),
+  JSON.stringify(diskConc),
+);
+setMemoryRoot(TMP);
+await fs.rm(CONCTMP, { recursive: true, force: true });
+
 // injection block format (Hermes headers)
 const block = store.formatBlock("memory");
 assert("memory block has Hermes header", block.includes("MEMORY (your personal notes)") && block.includes("durable fact A"), block.slice(0, 80));
@@ -106,5 +122,5 @@ assert("extractOperations parses memory + skills", parsed.operations.length === 
 assert("extractOperations rejects junk", !!extractOperations("no json here").error);
 
 await fs.rm(TMP, { recursive: true, force: true });
-console.log(`\n${passed} 通过, ${failed} 失败`);
+console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

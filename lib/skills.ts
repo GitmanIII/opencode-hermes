@@ -407,6 +407,7 @@ export async function manageSkill(root: string, params: ManageParams): Promise<M
     if (existing.dir) return { success: false, error: `skill '${name}' already exists at ${existing.dir}.` };
     const dir = params.category ? path.join(root, params.category, name) : path.join(root, name);
     if (!isInside(root, dir)) return { success: false, error: "skill path escapes the skills root." };
+    if (await pathExists(dir)) return { success: false, error: `skill directory already exists at ${dir}.` };
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, "SKILL.md"), params.content, "utf-8");
     await bumpUsage(root, name, "patch", "agent");
@@ -429,6 +430,7 @@ export async function manageSkill(root: string, params: ManageParams): Promise<M
 
   if (action === "patch") {
     if (params.oldString === undefined || params.newString === undefined) return { success: false, error: "patch requires old_string and new_string." };
+    if (params.oldString === "") return { success: false, error: "patch requires a non-empty old_string." };
     const target = params.filePath ? path.resolve(dir, params.filePath) : path.join(dir, "SKILL.md");
     if (!isInside(dir, target)) return { success: false, error: "file_path escapes the skill directory." };
     let content: string;
@@ -439,13 +441,16 @@ export async function manageSkill(root: string, params: ManageParams): Promise<M
     }
     let updated: string | null = null;
     if (content.includes(params.oldString)) {
-      updated = params.replaceAll ? content.split(params.oldString).join(params.newString) : content.replace(params.oldString, params.newString);
+      // Replacement via a function so `$&`/`$$` in new_string stay literal.
+      updated = params.replaceAll
+        ? content.split(params.oldString).join(params.newString)
+        : content.replace(params.oldString, () => params.newString!);
     } else {
       // normalized-whitespace fallback for a single occurrence
       const idx = normalize(content).indexOf(normalize(params.oldString));
       if (idx >= 0) {
         const re = new RegExp(params.oldString.trim().split(/\s+/).map(escapeRe).join("\\s+"));
-        updated = content.replace(re, params.newString);
+        updated = content.replace(re, () => params.newString!);
       }
     }
     if (updated === null || updated === content) return { success: false, error: "old_string not found (or no change)." };

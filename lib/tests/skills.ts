@@ -71,6 +71,13 @@ assert("view returns content", v.success && (v.content ?? "").includes("# Test S
 r = await manageSkill(ROOT, { action: "patch", name: "test-skill", oldString: "Body text here.", newString: "Body text updated." });
 assert("patch succeeds", r.success, r.error ?? "");
 assert("patch persisted", (await fs.readFile(path.join(ROOT, "testing", "test-skill", "SKILL.md"), "utf-8")).includes("Body text updated."));
+assert("patch rejects empty old_string", !(await manageSkill(ROOT, { action: "patch", name: "test-skill", oldString: "", newString: "X" })).success);
+r = await manageSkill(ROOT, { action: "patch", name: "test-skill", oldString: "Body text updated.", newString: "costs $5 & $$ and $& literal" });
+assert(
+  "patch keeps $ patterns literal in new_string",
+  r.success && (await fs.readFile(path.join(ROOT, "testing", "test-skill", "SKILL.md"), "utf-8")).includes("costs $5 & $$ and $& literal"),
+  r.error ?? "",
+);
 
 // 5. support files + guards
 r = await manageSkill(ROOT, { action: "write_file", name: "test-skill", filePath: "references/notes.md", fileContent: "ref notes" });
