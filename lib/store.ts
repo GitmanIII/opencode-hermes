@@ -97,6 +97,18 @@ export class MemoryStore {
     }
   }
 
+  /**
+   * Re-read both files if they changed on disk since we last loaded them. Run
+   * when a new session starts so the injected snapshot reflects writes made by
+   * other OpenCode processes, not just this one. Serialized with mutations so it
+   * can't race a write in flight.
+   */
+  refresh(): Promise<void> {
+    return this.enqueueWrite(async () => {
+      for (const target of TARGETS) await this.syncFromDiskIfChanged(target);
+    });
+  }
+
   private async readEntries(target: Target): Promise<string[]> {
     try {
       const raw = await fs.readFile(this.pathFor(target), "utf-8");

@@ -224,31 +224,58 @@ export async function readUsage(root: string): Promise<Record<string, UsageRecor
   }
 }
 
+/**
+ * Serialize read-modify-write cycles on a root's `.usage.json`. Concurrent tool
+ * calls and the background review otherwise race: two read-modify-writes can
+ * clobber each other (lost increments, dropped state).
+ */
+const usageWriteChains = new Map<string, Promise<unknown>>();
+function serializeUsageWrite<T>(root: string, task: () => Promise<T>): Promise<T> {
+  const prev = usageWriteChains.get(root) ?? Promise.resolve();
+  const next = prev.then(task, task);
+  usageWriteChains.set(
+    root,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
 async function writeUsage(root: string, usage: Record<string, UsageRecord>): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const file = path.join(root, DEFAULT_USAGE);
-  const tmp = `${file}.${process.pid}.tmp`;
+  // Unique per write so two writers can never move each other's temp file.
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(usage, null, 2), "utf-8");
-  await fs.rename(tmp, file);
+  try {
+    await fs.rename(tmp, file);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
-export async function bumpUsage(root: string, name: string, field: "use" | "view" | "patch", createdBy?: string): Promise<void> {
-  const usage = await readUsage(root);
-  const rec = usage[name] ?? {};
-  if (createdBy && !rec.created_by) rec.created_by = createdBy;
-  rec.created_at = rec.created_at ?? new Date().toISOString();
-  if (field === "use") {
-    rec.use_count = (rec.use_count ?? 0) + 1;
-    rec.last_used_at = new Date().toISOString();
-  } else if (field === "view") {
-    rec.view_count = (rec.view_count ?? 0) + 1;
-    rec.last_viewed_at = new Date().toISOString();
-  } else {
-    rec.patch_count = (rec.patch_count ?? 0) + 1;
-    rec.last_patched_at = new Date().toISOString();
-  }
-  usage[name] = rec;
-  await writeUsage(root, usage);
+export function bumpUsage(root: string, name: string, field: "use" | "view" | "patch", createdBy?: string): Promise<void> {
+  return serializeUsageWrite(root, async () => {
+    const usage = await readUsage(root);
+    const rec = usage[name] ?? {};
+    if (createdBy && !rec.created_by) rec.created_by = createdBy;
+    rec.created_at = rec.created_at ?? new Date().toISOString();
+    if (field === "use") {
+      rec.use_count = (rec.use_count ?? 0) + 1;
+      rec.last_used_at = new Date().toISOString();
+    } else if (field === "view") {
+      rec.view_count = (rec.view_count ?? 0) + 1;
+      rec.last_viewed_at = new Date().toISOString();
+    } else {
+      rec.patch_count = (rec.patch_count ?? 0) + 1;
+      rec.last_patched_at = new Date().toISOString();
+    }
+    usage[name] = rec;
+    await writeUsage(root, usage);
+  });
 }
 
 export async function provenance(root: string, name: string): Promise<string> {
@@ -256,12 +283,14 @@ export async function provenance(root: string, name: string): Promise<string> {
   return usage[name]?.created_by ?? "unknown";
 }
 
-export async function setPinned(root: string, name: string, pinned: boolean): Promise<void> {
-  const usage = await readUsage(root);
-  const rec = usage[name] ?? {};
-  rec.pinned = pinned;
-  usage[name] = rec;
-  await writeUsage(root, usage);
+export function setPinned(root: string, name: string, pinned: boolean): Promise<void> {
+  return serializeUsageWrite(root, async () => {
+    const usage = await readUsage(root);
+    const rec = usage[name] ?? {};
+    rec.pinned = pinned;
+    usage[name] = rec;
+    await writeUsage(root, usage);
+  });
 }
 
 export type CurateOptions = {
@@ -295,7 +324,11 @@ function latestActivity(rec: UsageRecord): number | null {
  * are marked `stale` after staleAfterDays and moved to `<root>/.archive/` after
  * archiveAfterDays. Restorable via restoreSkill.
  */
-export async function curateSkills(root: string, opts: CurateOptions = {}): Promise<CurateResult> {
+export function curateSkills(root: string, opts: CurateOptions = {}): Promise<CurateResult> {
+  return serializeUsageWrite(root, () => curateSkillsLocked(root, opts));
+}
+
+async function curateSkillsLocked(root: string, opts: CurateOptions = {}): Promise<CurateResult> {
   const staleAfterDays = opts.staleAfterDays ?? 30;
   const archiveAfterDays = opts.archiveAfterDays ?? 90;
   const now = opts.now ?? Date.now();
@@ -353,7 +386,11 @@ async function uniqueArchivePath(root: string, name: string): Promise<string> {
   return candidate;
 }
 
-export async function restoreSkill(root: string, name: string): Promise<{ success: boolean; error?: string }> {
+export function restoreSkill(root: string, name: string): Promise<{ success: boolean; error?: string }> {
+  return serializeUsageWrite(root, () => restoreSkillLocked(root, name));
+}
+
+async function restoreSkillLocked(root: string, name: string): Promise<{ success: boolean; error?: string }> {
   if (!VALID_NAME_RE.test(name)) return { success: false, error: `invalid skill name '${name}'.` };
   const archive = path.join(root, ARCHIVE_DIR);
   let entries: string[] = [];

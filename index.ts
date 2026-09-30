@@ -177,6 +177,9 @@ const plugin: Plugin = async ({ client, project, directory }) => {
       const event = input.event;
       try {
         if (event.type === "session.created") {
+          // Pick up memory written by other OpenCode processes before freezing
+          // this session's snapshot.
+          await store.refresh().catch((err) => log(`store refresh failed: ${String(err)}`));
           snapshot = store.formatForSystemPrompt();
           return;
         }
@@ -210,12 +213,14 @@ const plugin: Plugin = async ({ client, project, directory }) => {
           try {
             const result = await runBackgroundReview(client, store, directory, projectIdOf(project, directory), sessionID, skillsRoot(), manager);
             lastReviewAt = Date.now();
-            log(`background review: saved=${result.savedCount} skills=${result.savedSkills ?? 0}${result.error ? ` err=${result.error}` : ""}`);
+            const savedSkills = result.savedSkills ?? 0;
+            const savedMemory = result.savedCount - savedSkills;
+            log(`background review: memory=${savedMemory} skills=${savedSkills}${result.error ? ` err=${result.error}` : ""}`);
             sessionTurns.set(sessionID, 0);
-            if (result.savedCount > 0 || (result.savedSkills ?? 0) > 0) {
+            if (result.savedCount > 0) {
               await client.tui
                 ?.showToast({
-                  body: { title: "opencode-hermes", message: `Saved ${result.savedCount} memory + ${result.savedSkills ?? 0} skill item(s)`, variant: "info", duration: 4000 },
+                  body: { title: "opencode-hermes", message: `Saved ${savedMemory} memory + ${savedSkills} skill item(s)`, variant: "info", duration: 4000 },
                 })
                 .catch(() => {});
             }
@@ -245,8 +250,9 @@ const plugin: Plugin = async ({ client, project, directory }) => {
         const sessionID = (input as { sessionID?: string }).sessionID;
         if (!sessionID || isInternalSessionId(sessionID)) return;
         const result = await runFlushReview(client, store, directory, projectIdOf(project, directory), sessionID, skillsRoot(), manager);
-        if (result.savedCount > 0 || (result.savedSkills ?? 0) > 0) {
-          output.context.push(`opencode-hermes: saved ${result.savedCount} memory + ${result.savedSkills ?? 0} skill item(s) before compaction.`);
+        if (result.savedCount > 0) {
+          const savedSkills = result.savedSkills ?? 0;
+          output.context.push(`opencode-hermes: saved ${result.savedCount - savedSkills} memory + ${savedSkills} skill item(s) before compaction.`);
         }
       } catch (err) {
         log(`session.compacting error: ${String(err)}`);

@@ -8,6 +8,11 @@
 import { Database } from "bun:sqlite";
 import type { MemoryProvider, MemoryWriteAction, ProviderContext, ProviderHit } from "../memory-provider.ts";
 
+/** Escape SQLite LIKE wildcards so a literal term can't broaden the match. */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 export class SqliteMemoryProvider implements MemoryProvider {
   readonly name = "sqlite";
   private db!: Database;
@@ -26,7 +31,8 @@ export class SqliteMemoryProvider implements MemoryProvider {
   }
 
   async add(content: string, tags?: string[]): Promise<{ id: string }> {
-    const text = content.trim();
+    const text = (content ?? "").trim();
+    if (!text) throw new Error("add requires content");
     const id = `pm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     this.db.run(`INSERT INTO memo (id, text, tags, created_at) VALUES (?, ?, ?, ?)`, [id, text, tags?.join(",") ?? null, Date.now()]);
     return { id };
@@ -35,7 +41,13 @@ export class SqliteMemoryProvider implements MemoryProvider {
   async search(query: string, limit = 5): Promise<ProviderHit[]> {
     const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
     if (!terms.length) return [];
-    const rows = this.db.query(`SELECT id, text FROM memo`).all() as { id: string; text: string }[];
+    // Push candidate selection into SQLite (a C-speed scan) so we only score
+    // rows that actually contain a term, instead of materializing the whole
+    // table into JS. Scoring below still counts exact substring occurrences to
+    // preserve ranking.
+    const where = terms.map(() => `lower(text) LIKE ? ESCAPE '\\'`).join(" OR ");
+    const params = terms.map((t) => `%${escapeLike(t)}%`);
+    const rows = this.db.query(`SELECT id, text FROM memo WHERE ${where}`).all(...params) as { id: string; text: string }[];
     const scored: ProviderHit[] = [];
     for (const row of rows) {
       const lower = row.text.toLowerCase();

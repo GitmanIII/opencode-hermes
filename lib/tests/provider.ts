@@ -43,6 +43,10 @@ assert("add returns an id", typeof a.id === "string" && a.id.startsWith("pm_"));
 const hits = await provider.search("BirdNET dove", 5);
 assert("search finds the relevant note", hits.length >= 1 && hits[0].text.includes("BirdNET"), JSON.stringify(hits.map((h) => h.score)));
 assert("search ignores unrelated notes", !hits.some((h) => h.text.includes("postgres")));
+// LIKE wildcards in a query must be treated literally (SQL pushdown + ESCAPE)
+await provider.add("disk usage hit 100% overnight");
+const pct = await provider.search("100%", 5);
+assert("LIKE wildcards in a query don't broaden the match", pct.length === 1 && pct[0].text.includes("100%"), JSON.stringify(pct.map((h) => h.text)));
 
 const pf = await provider.prefetch("how does birdnet score doves");
 assert("prefetch returns a provider-memory block", pf.hits >= 1 && pf.text.includes("<provider-memory") && pf.text.includes("BirdNET"));

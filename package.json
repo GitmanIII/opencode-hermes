@@ -1,6 +1,6 @@
 {
   "name": "opencode-hermes",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Hermes-style persistent memory + skills for OpenCode: layered Markdown memory, self-learning review, skill authoring, and curation.",
   "type": "module",
   "main": "index.ts",
@@ -8,7 +8,7 @@
     "./server": "./index.ts"
   },
   "keywords": ["opencode-plugin", "opencode", "memory", "agent-memory", "skills", "self-learning"],
-  "files": ["index.ts", "plugin.ts", "lib/*.ts", "README.md", "LICENSE"],
+  "files": ["index.ts", "plugin.ts", "lib/*.ts", "lib/providers/*.ts", "README.md", "LICENSE"],
   "repository": { "type": "git", "url": "git+https://github.com/GitmanIII/opencode-hermes.git" },
   "homepage": "https://github.com/GitmanIII/opencode-hermes#readme",
   "bugs": { "url": "https://github.com/GitmanIII/opencode-hermes/issues" },

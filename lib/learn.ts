@@ -293,12 +293,18 @@ function buildTranscript(messages: MessageLike[]): string {
       lines.push(`<${role}>\n${text}\n</${role}>`);
     }
   }
-  let joined = lines.join("\n\n");
-  while (joined.length > TRANSCRIPT_MAX_CHARS && lines.length > 1) {
-    lines.shift();
-    joined = lines.join("\n\n");
+  // Keep the most recent lines up to the cap, in one pass from the tail
+  // (the previous shift-and-rejoin loop was O(n²) and rebuilt the whole string).
+  const kept: string[] = [];
+  let total = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const len = lines[i].length + (kept.length ? 2 : 0);
+    if (total + len > TRANSCRIPT_MAX_CHARS && kept.length) break;
+    kept.push(lines[i]);
+    total += len;
   }
-  return joined;
+  kept.reverse();
+  return kept.join("\n\n");
 }
 
 export { isInternalSession };

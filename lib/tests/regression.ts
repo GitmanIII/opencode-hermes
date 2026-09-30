@@ -108,6 +108,17 @@ assert(
 setMemoryRoot(TMP);
 await fs.rm(CONCTMP, { recursive: true, force: true });
 
+// refresh() picks up writes made by another process since load (session.created)
+const REFTMP = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-reg-refresh-"));
+setMemoryRoot(REFTMP);
+const refStore = new MemoryStore({});
+await refStore.loadFromDisk();
+await fs.writeFile(path.join(REFTMP, "MEMORY.md"), "external fact\n§\nsecond fact", "utf-8");
+await refStore.refresh();
+assert("refresh picks up external writes", refStore.getEntries("memory").includes("external fact"), JSON.stringify(refStore.getEntries("memory")));
+setMemoryRoot(TMP);
+await fs.rm(REFTMP, { recursive: true, force: true });
+
 // injection block format (Hermes headers)
 const block = store.formatBlock("memory");
 assert("memory block has Hermes header", block.includes("MEMORY (your personal notes)") && block.includes("durable fact A"), block.slice(0, 80));
