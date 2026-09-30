@@ -110,7 +110,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 bun run test
 ```
 
-155 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, config.
+161 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring, self-learning, skills, efficacy, token cost, curation, JSONC config parsing, session recall (multi-term discovery).
 
 ## Attribution & License
 

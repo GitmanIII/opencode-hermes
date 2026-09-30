@@ -64,11 +64,10 @@ export function extractOperations(text: string): {
     return parse(cleaned.slice(start, end + 1));
   } catch (err) {
     try {
-      const repaired = cleaned
-        .slice(start, end + 1)
-        .replace(/,\s*([}\]])/g, "$1")
-        .replace(/\/\/[^\n]*/g, "")
-        .replace(/\/\*[\s\S]*?\*\//g, "");
+      // Only strip trailing commas: the model is told to emit bare JSON, and a
+      // blanket `//`/`/* */` strip would corrupt `//` inside a string value
+      // (e.g. a URL in a memory entry).
+      const repaired = cleaned.slice(start, end + 1).replace(/,\s*([}\]])/g, "$1");
       const out = parse(repaired);
       if (out.operations.length > 0 || out.skills.length > 0) return out;
     } catch {

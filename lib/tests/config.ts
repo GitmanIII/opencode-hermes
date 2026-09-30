@@ -62,6 +62,26 @@ await fs.writeFile(cfgPath, `{\n  "provider": "file:///home/me/opencode-hermes-e
 const urlCfg = loadConfig();
 assert("file:// provider URL survives JSONC strip", urlCfg.provider === "file:///home/me/opencode-hermes-embeddings/src/provider.ts", urlCfg.provider);
 assert("nested providerOptions parse", (urlCfg.providerOptions as { endpoint?: string }).endpoint === "http://127.0.0.1:8080", JSON.stringify(urlCfg.providerOptions));
+
+// JSONC robustness: string contents survive; trailing commas and tight comments parse.
+await fs.writeFile(
+  cfgPath,
+  `{
+  "nudgeInterval": 3,// tight comment (no space before //)
+  "providerOptions": {
+    "glob": "src/**/*.ts",
+    "note": "a // b and http://x /* y",
+    "list": [1, 2,],
+  },
+}\n`,
+  "utf-8",
+);
+const jsoncCfg = loadConfig();
+const po = jsoncCfg.providerOptions as { glob?: string; note?: string; list?: number[] };
+assert("JSONC: glob with /* survives", po.glob === "src/**/*.ts", String(po.glob));
+assert("JSONC: // and /* inside strings survive", po.note === "a // b and http://x /* y", String(po.note));
+assert("JSONC: trailing commas stripped", Array.isArray(po.list) && po.list.length === 2, JSON.stringify(po.list));
+assert("JSONC: trailing comma before } parses", jsoncCfg.nudgeInterval === 3, String(jsoncCfg.nudgeInterval));
 process.env.HERMES_OPENCODE_USER_LIMIT = "777";
 assert("env beats file", loadConfig().userCharLimit === 777, String(loadConfig().userCharLimit));
 delete process.env.HERMES_OPENCODE_USER_LIMIT;

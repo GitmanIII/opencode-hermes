@@ -104,23 +104,32 @@ export function sessionSearch(dbPath: string, params: SessionSearchParams = {}):
 }
 
 function discoveryShape(db: Database, query: string, limit: number): SessionSearchResult {
-  const like = `%${escapeLike(query)}%`;
+  // Match ANY term (not the exact phrase) so a natural multi-word query like
+  // "pigeon detector tuning" still finds messages that contain those words in
+  // a different order. Candidates are ordered by how many distinct terms hit,
+  // then recency, so the SCAN_LIMIT cut keeps the most relevant rows.
+  const terms = [...new Set(query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2))].slice(0, 8);
+  const searchTerms = terms.length ? terms : [query.toLowerCase()];
+  const patterns = searchTerms.map((t) => `%${escapeLike(t)}%`);
+  const clauses = searchTerms.map(() => `p.data LIKE ? ESCAPE '\\'`).join(" OR ");
+  const scoreCases = searchTerms.map(() => `(CASE WHEN p.data LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)`).join(" + ");
+
   type DiscoveryRow = Row & { title: string | null; directory: string | null; time_updated: number | null };
   const rows = db
     .query(
       `SELECT p.id AS id, p.session_id AS session_id, p.message_id AS message_id, p.data AS data, p.time_created AS time_created,
-              s.title AS title, s.directory AS directory, s.time_updated AS time_updated
+              s.title AS title, s.directory AS directory, s.time_updated AS time_updated,
+              (${scoreCases}) AS term_hits
        FROM part p
        JOIN session s ON s.id = p.session_id
        WHERE s.parent_id IS NULL
          AND json_extract(p.data, '$.type') = 'text'
-         AND p.data LIKE ? ESCAPE '\\'
-       ORDER BY p.time_created DESC
+         AND (${clauses})
+       ORDER BY term_hits DESC, p.time_created DESC
        LIMIT ?`,
     )
-    .all(like, SCAN_LIMIT) as DiscoveryRow[];
+    .all(...patterns, ...patterns, SCAN_LIMIT) as DiscoveryRow[];
 
-  const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
   type Hit = { session: { id: string; title: string; directory: string; time: number }; score: number; matches: { message_id: string; time: number; text: string }[] };
   const bySession = new Map<string, Hit>();
 
@@ -129,7 +138,7 @@ function discoveryShape(db: Database, query: string, limit: number): SessionSear
     if (!text) continue;
     const lower = text.toLowerCase();
     let score = 0;
-    for (const t of terms.length ? terms : [query.toLowerCase()]) {
+    for (const t of searchTerms) {
       let i = lower.indexOf(t);
       while (i !== -1) {
         score++;
@@ -161,7 +170,7 @@ function discoveryShape(db: Database, query: string, limit: number): SessionSear
     score: h.score,
     link: `@session/local/${h.session.id}`,
     // hydrate the top result with its matching messages
-    matches: (i === 0 ? h.matches.slice(0, 5) : h.matches.slice(0, 1)).map((m) => ({ ...m, snippet: snippet(m.text, terms[0] ?? query) })),
+    matches: (i === 0 ? h.matches.slice(0, 5) : h.matches.slice(0, 1)).map((m) => ({ ...m, snippet: snippet(m.text, searchTerms[0]) })),
   }));
 
   return { success: true, shape: "discovery", count: results.length, results, note: results.length === 0 ? "no matching past sessions" : undefined };

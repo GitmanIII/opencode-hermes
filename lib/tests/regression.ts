@@ -131,6 +131,12 @@ assert("splitter tolerates legacy separator", splitEntries("a -->§\nb").length 
 const parsed = extractOperations('```json\n{"operations":[{"action":"add","target":"memory","content":"x"}],"skills":[{"action":"create","name":"s"}]}\n```');
 assert("extractOperations parses memory + skills", parsed.operations.length === 1 && parsed.skills.length === 1 && !parsed.error, parsed.error ?? "");
 assert("extractOperations rejects junk", !!extractOperations("no json here").error);
+const repaired = extractOperations('{"operations":[{"action":"add","content":"keep http://x // y"},]}');
+assert(
+  "extractOperations repairs trailing commas without corrupting // in strings",
+  repaired.operations.length === 1 && (repaired.operations[0] as { content?: string }).content === "keep http://x // y",
+  JSON.stringify(repaired),
+);
 
 await fs.rm(TMP, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -44,11 +44,87 @@ export function configFile(): string {
   return process.env.HERMES_OPENCODE_CONFIG ?? path.join(os.homedir(), ".config", "opencode", "opencode-hermes.json");
 }
 
+/**
+ * Strip JSONC comments and trailing commas, character-by-character rather than
+ * with regexes, so string contents are never touched: `//`/`/*` inside a value
+ * (a `file://` URL, a glob like `src/**\/*.ts`, prose) survive, and JSONC's
+ * optional trailing commas (which `JSON.parse` rejects) are removed. The old
+ * regex approach truncated such values and could not handle trailing commas.
+ */
 function stripJsonc(text: string): string {
-  // Strip /* */ and // comments. A // only starts a line comment at line start
-  // or after whitespace — otherwise it's part of a value such as file:///path
-  // (the naive "not preceded by : \" '" form truncated URLs).
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[ \t])\/\/[^\n]*/gm, "$1");
+  return stripTrailingCommas(stripComments(text));
+}
+
+function stripComments(text: string): string {
+  let out = "";
+  let inString = false;
+  let quote = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\" && i + 1 < text.length) {
+        out += text[i + 1];
+        i++;
+      } else if (c === quote) {
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inString = true;
+      quote = c;
+      out += c;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "/") {
+      i += 2;
+      while (i < text.length && text[i] !== "\n") i++;
+      i--; // let the loop append the newline
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i += 1;
+      out += " "; // keep the two sides from merging into one token
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+function stripTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  let quote = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\" && i + 1 < text.length) {
+        out += text[i + 1];
+        i++;
+      } else if (c === quote) {
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inString = true;
+      quote = c;
+      out += c;
+      continue;
+    }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === "}" || text[j] === "]") continue; // drop trailing comma
+    }
+    out += c;
+  }
+  return out;
 }
 
 function readFileConfig(): Partial<HermesConfig> {

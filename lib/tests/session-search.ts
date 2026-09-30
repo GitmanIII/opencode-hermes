@@ -51,6 +51,9 @@ assert("discovery finds the matching session", disc.success && disc.shape === "d
 assert("discovery returns the right session", (disc.results as any[])[0]?.session_id === "s1", JSON.stringify(disc.results).slice(0, 160));
 assert("discovery hydrates matches", Array.isArray((disc.results as any[])[0]?.matches) && (disc.results as any[])[0].matches.length >= 1);
 assert("discovery hides child sessions", !JSON.stringify(disc.results).includes("s3"));
+// multi-word queries match terms in any order (not just the exact phrase)
+const discMulti = sessionSearch(dbPath, { query: "BirdNET audio" });
+assert("discovery matches non-contiguous terms", (discMulti.results as any[])[0]?.session_id === "s1", JSON.stringify(discMulti.results).slice(0, 160));
 
 // browse
 const browse = sessionSearch(dbPath, {});

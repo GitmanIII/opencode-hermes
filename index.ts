@@ -162,7 +162,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
             await client.session
               .prompt({
                 path: { id: input.sessionID },
-                body: { parts: [{ id: `prt-pm-${Date.now()}`, type: "text", text: block, synthetic: true }], noReply: true },
+                body: { parts: [{ id: `prt-pm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, type: "text", text: block, synthetic: true }], noReply: true },
               })
               .catch((err) => log(`provider prefetch inject failed: ${String(err)}`));
           }
