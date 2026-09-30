@@ -12,6 +12,11 @@ import { MemoryStore } from "../store.ts";
 
 process.env.HERMES_NUDGE_INTERVAL = "2";
 process.env.HERMES_OPENCODE_LOG = path.join(os.tmpdir(), "opencode-hermes-test.log");
+// Hermetic: never read the user's real config (it selects the embeddings
+// provider), so the plugin under test registers no provider and makes no
+// network calls / touches no real store.
+process.env.HERMES_OPENCODE_CONFIG = path.join(os.tmpdir(), `hermes-sl-missing-${process.pid}.json`);
+delete process.env.HERMES_OPENCODE_PROVIDER;
 
 let passed = 0;
 let failed = 0;
