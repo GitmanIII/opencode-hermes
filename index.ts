@@ -336,9 +336,11 @@ const plugin: Plugin = async ({ client, project, directory }) => {
         },
       }),
 
-      provider_memory: tool({
+      // Registered only when a provider is active: with none it would be a dead
+      // tool (always erroring) cluttering the surface.
+      ...(manager.provider ? { provider_memory: tool({
         description:
-          "External long-term memory provider: search or add durable notes. Requires a provider (config `provider` = 'sqlite'). Relevant notes are also injected automatically before each turn.",
+          "External long-term memory provider: search or add durable notes. Relevant notes are also injected automatically before each turn.",
         args: {
           action: tool.schema.enum(["search", "add", "forget"]).describe("Operation."),
           query: tool.schema.string().optional().describe("search: terms."),
@@ -367,19 +369,21 @@ const plugin: Plugin = async ({ client, project, directory }) => {
             return JSON.stringify({ success: false, error: String(err) });
           }
         },
-      }),
+      }) } : {}),
 
       // skill_list/skill_view are intentionally not registered: opencode itself
       // lists skills in the system prompt and can read SKILL.md/support files
       // with the normal read tool. The internal helpers remain for the review.
+      // Curate/restore are folded into skill_manage's action enum (rather than
+      // separate tools) to keep the surface at 4 tools; both keep every function.
       skill_manage: tool({
         description:
-          "Create or maintain a skill (procedural memory). Create when a complex task succeeded, an error was overcome, or a reusable workflow was discovered; patch when a skill is stale or missing a step. Actions: create, patch, edit, delete, write_file, remove_file.",
+          "Create or maintain a skill (procedural memory). Authoring actions: create, patch, edit, delete, write_file, remove_file (create when a complex task succeeded, an error was overcome, or a reusable workflow was discovered; patch when a skill is stale or missing a step). Lifecycle actions: curate (mark agent-created skills stale, archive very old ones; never touches user/pinned skills; dry_run previews) and restore (bring an archived skill back).",
         args: {
           action: tool.schema
-            .enum(["create", "patch", "edit", "delete", "write_file", "remove_file"])
+            .enum(["create", "patch", "edit", "delete", "write_file", "remove_file", "curate", "restore"])
             .describe("Operation to perform."),
-          name: tool.schema.string().describe("Skill name (lowercase-hyphen, <=64 chars)."),
+          name: tool.schema.string().optional().describe("Skill name (lowercase-hyphen, <=64 chars). Required except for 'curate'."),
           category: tool.schema.string().optional().describe("Category folder (create only)."),
           content: tool.schema
             .string()
@@ -390,13 +394,27 @@ const plugin: Plugin = async ({ client, project, directory }) => {
           replace_all: tool.schema.boolean().optional().describe("patch: replace every occurrence."),
           file_path: tool.schema.string().optional().describe("write_file/remove_file: path under references/, scripts/, templates/, or assets/."),
           file_content: tool.schema.string().optional().describe("write_file: file contents."),
+          dry_run: tool.schema.boolean().optional().describe("curate: preview only; change nothing."),
+          stale_after_days: tool.schema.number().optional().describe("curate: mark stale after N days inactive (default 30)."),
+          archive_after_days: tool.schema.number().optional().describe("curate: archive after N days inactive (default 90)."),
         },
         async execute(args) {
           try {
+            if (args.action === "curate") {
+              const r = await curateSkills(skillsRoot(), {
+                dryRun: args.dry_run,
+                staleAfterDays: args.stale_after_days,
+                archiveAfterDays: args.archive_after_days,
+              });
+              return JSON.stringify({ success: true, ...r });
+            }
+            const name = args.name;
+            if (!name) return JSON.stringify({ success: false, error: `name is required for action '${args.action}'.` });
+            if (args.action === "restore") return JSON.stringify(await restoreSkill(skillsRoot(), name));
             return JSON.stringify(
               await manageSkill(skillsRoot(), {
                 action: args.action,
-                name: args.name,
+                name,
                 category: args.category,
                 content: args.content,
                 oldString: args.old_string,
@@ -406,42 +424,6 @@ const plugin: Plugin = async ({ client, project, directory }) => {
                 fileContent: args.file_content,
               }),
             );
-          } catch (err) {
-            return JSON.stringify({ success: false, error: String(err) });
-          }
-        },
-      }),
-
-      skill_curate: tool({
-        description:
-          "Lifecycle-curate AGENT-created skills: mark inactive ones stale, archive very old ones. Never touches user/hand-authored or pinned skills. Use dry_run to preview.",
-        args: {
-          dry_run: tool.schema.boolean().optional().describe("Preview only; change nothing."),
-          stale_after_days: tool.schema.number().optional().describe("Mark stale after N days inactive (default 30)."),
-          archive_after_days: tool.schema.number().optional().describe("Archive after N days inactive (default 90)."),
-        },
-        async execute(args) {
-          try {
-            const r = await curateSkills(skillsRoot(), {
-              dryRun: args.dry_run,
-              staleAfterDays: args.stale_after_days,
-              archiveAfterDays: args.archive_after_days,
-            });
-            return JSON.stringify({ success: true, ...r });
-          } catch (err) {
-            return JSON.stringify({ success: false, error: String(err) });
-          }
-        },
-      }),
-
-      skill_restore: tool({
-        description: "Restore an archived skill back into the active skills root.",
-        args: {
-          name: tool.schema.string().describe("Skill name to restore."),
-        },
-        async execute(args) {
-          try {
-            return JSON.stringify(await restoreSkill(skillsRoot(), args.name));
           } catch (err) {
             return JSON.stringify({ success: false, error: String(err) });
           }

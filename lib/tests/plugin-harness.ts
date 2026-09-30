@@ -18,6 +18,10 @@ await fs.cp(FIXTURES, TMP, { recursive: true });
 setMemoryRoot(TMP);
 setSkillsRoot(SKILLS);
 process.env.HERMES_OPENCODE_LOG = path.join(TMP, "test.log");
+// Hermetic: never read the user's real config (it sets an embeddings provider,
+// which would register provider_memory and make the surface assertion flaky).
+process.env.HERMES_OPENCODE_CONFIG = path.join(TMP, "no-such-config.json");
+delete process.env.HERMES_OPENCODE_PROVIDER;
 
 const pluginModule = (await import("../../index.ts")).default;
 
@@ -72,9 +76,20 @@ const skillContent = "---\nname: harness-skill\ndescription: Harness-created ski
 const created = JSON.parse(String(await hooks.tool.skill_manage.execute({ action: "create", name: "harness-skill", category: "testing", content: skillContent }, {})));
 assert("skill_manage create succeeds", created.success === true, JSON.stringify(created));
 assert(
-  "skill_list/skill_view are not registered (opencode lists skills natively)",
-  hooks.tool.skill_list === undefined && hooks.tool.skill_view === undefined,
+  "surface is lean: skill_list/view/curate/restore gone; provider_memory absent without a provider",
+  hooks.tool.skill_list === undefined &&
+    hooks.tool.skill_view === undefined &&
+    hooks.tool.skill_curate === undefined &&
+    hooks.tool.skill_restore === undefined &&
+    hooks.tool.provider_memory === undefined,
 );
+// curate/restore are now actions on skill_manage (6 -> 4 tools)
+const curated = JSON.parse(String(await hooks.tool.skill_manage.execute({ action: "curate", dry_run: true }, {})));
+assert("skill_manage curate action works", curated.success === true && Array.isArray(curated.stale), JSON.stringify(curated));
+const restored = JSON.parse(String(await hooks.tool.skill_manage.execute({ action: "restore", name: "nope" }, {})));
+assert("skill_manage restore action works", restored.success === false, JSON.stringify(restored));
+const noName = JSON.parse(String(await hooks.tool.skill_manage.execute({ action: "patch", old_string: "x", new_string: "y" }, {})));
+assert("skill_manage requires name for authoring actions", noName.success === false && String(noName.error).includes("name is required"), JSON.stringify(noName));
 
 // 4. no model calls in this path
 assert("no LLM session created", sessionsCreated === 0, String(sessionsCreated));
