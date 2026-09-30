@@ -100,7 +100,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
     "endpoint": "http://127.0.0.1:8080",
     "model": "nomic-ai/nomic-embed-text-v1.5",
     "topK": 5,
-    "minScore": 0.35
+    "minScore": 0.58
   }
 }
 ```
