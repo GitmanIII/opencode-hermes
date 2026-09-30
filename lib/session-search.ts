@@ -111,8 +111,12 @@ function discoveryShape(db: Database, query: string, limit: number): SessionSear
   const terms = [...new Set(query.toLowerCase().split(/\s+/).filter((t) => t.length >= 2))].slice(0, 8);
   const searchTerms = terms.length ? terms : [query.toLowerCase()];
   const patterns = searchTerms.map((t) => `%${escapeLike(t)}%`);
-  const clauses = searchTerms.map(() => `p.data LIKE ? ESCAPE '\\'`).join(" OR ");
-  const scoreCases = searchTerms.map(() => `(CASE WHEN p.data LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)`).join(" + ");
+  // Match the part's TEXT field, never the raw JSON: `p.data LIKE '%text%'`
+  // also matches structural tokens like `"type":"text"`, so a query containing
+  // such a word filled the SCAN_LIMIT window with every text part and crowded
+  // out real matches.
+  const clauses = searchTerms.map(() => `json_extract(p.data,'$.text') LIKE ? ESCAPE '\\'`).join(" OR ");
+  const scoreCases = searchTerms.map(() => `(CASE WHEN json_extract(p.data,'$.text') LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)`).join(" + ");
 
   type DiscoveryRow = Row & { title: string | null; directory: string | null; time_updated: number | null };
   const rows = db

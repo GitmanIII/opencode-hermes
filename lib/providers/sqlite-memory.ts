@@ -26,6 +26,8 @@ export class SqliteMemoryProvider implements MemoryProvider {
     this.db.run(
       `CREATE TABLE IF NOT EXISTS memo (id TEXT PRIMARY KEY, text TEXT NOT NULL, tags TEXT, created_at INTEGER NOT NULL);`,
     );
+    // Exact-text lookups (mirror dedupe, deleteByText) otherwise scan the table.
+    this.db.run(`CREATE INDEX IF NOT EXISTS memo_text_idx ON memo (text);`);
   }
 
   systemPromptBlock(): string {

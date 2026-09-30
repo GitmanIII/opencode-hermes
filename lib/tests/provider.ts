@@ -6,7 +6,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { applyOperations } from "../learn.ts";
+import { applyOperations, runDream } from "../learn.ts";
 import { createProvider } from "../memory-provider.ts";
 import { MemoryManager } from "../memory-manager.ts";
 import { setMemoryRoot } from "../paths.ts";
@@ -125,6 +125,14 @@ const amgr = new MemoryManager(asyncProvider as never);
 assert("manager awaits async provider search", (await amgr.search("q")).length === 1);
 assert("manager awaits async provider add", (await amgr.add("x"))?.id === "id1");
 
+// Manager surfaces best-effort provider failures (throttled) instead of
+// swallowing them, so a dead embeddings endpoint is visible in the log.
+const reported: string[] = [];
+const failingProvider = { ...asyncProvider, prefetch: async () => { throw new Error("TEI unreachable"); } };
+const emgr = new MemoryManager(failingProvider as never, (m) => reported.push(m));
+assert("manager prefetch stays best-effort", (await emgr.prefetch("x")) === "");
+assert("manager reports provider failures", reported.length === 1 && reported[0].includes("prefetch") && reported[0].includes("TEI unreachable"), JSON.stringify(reported));
+
 // Dream: the manager exposes the provider's optional reconcile; no-op without one.
 const recProvider = {
   ...asyncProvider,
@@ -134,6 +142,26 @@ const recMgr = new MemoryManager(recProvider as never);
 const rstats = await recMgr.reconcile(["a", "b"]);
 assert("manager exposes provider reconcile", rstats?.canonical === 2 && rstats?.superseded === 1, JSON.stringify(rstats));
 assert("manager reconcile is a no-op without a provider", (await new MemoryManager(null).reconcile(["a"])) === undefined);
+
+// The dream must ask the provider to GC tombstones, else the store grows
+// without bound (tombstones are invisible to recall).
+const dreamRoot = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-dream-"));
+setMemoryRoot(dreamRoot);
+const dreamStore = new MemoryStore({});
+await dreamStore.loadFromDisk();
+await dreamStore.add("memory", "canonical dream fact");
+let sawHardDelete = false;
+const recProvider2 = {
+  ...asyncProvider,
+  reconcile: async (_c: string[], opts?: { hardDelete?: boolean }) => {
+    sawHardDelete = opts?.hardDelete === true;
+    return { canonical: 1, added: 0, superseded: 0, judged: 0, removed: 3 };
+  },
+};
+const dreamStats = await runDream({} as never, dreamStore, "/tmp", new MemoryManager(recProvider2 as never));
+assert("dream GCs tombstones via hardDelete", sawHardDelete && dreamStats?.removed === 3, JSON.stringify(dreamStats));
+setMemoryRoot(TMP);
+await fs.rm(dreamRoot, { recursive: true, force: true });
 
 await fs.rm(TMP, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);

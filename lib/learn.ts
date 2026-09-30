@@ -248,7 +248,10 @@ export async function runDream(
         return /^\s*yes/i.test(out.text ?? "");
       }
     : undefined;
-  return manager.reconcile(canonical, { judge });
+  // The dream runs on idle; hardDelete GCs the tombstones it created so the
+  // store doesn't grow without bound (tombstones are invisible to recall and
+  // re-adding a superseded fact already inserts a fresh live note).
+  return manager.reconcile(canonical, { judge, hardDelete: true });
 }
 
 export function clearSession(sessionID: string): void {

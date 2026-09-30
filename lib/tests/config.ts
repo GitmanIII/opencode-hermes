@@ -5,7 +5,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { HERMES_DEFAULTS, loadConfig } from "../config.ts";
+import { configWarnings, HERMES_DEFAULTS, loadConfig } from "../config.ts";
 import { setMemoryRoot } from "../paths.ts";
 import { MemoryStore } from "../store.ts";
 
@@ -85,6 +85,11 @@ assert("JSONC: trailing comma before } parses", jsoncCfg.nudgeInterval === 3, St
 process.env.HERMES_OPENCODE_USER_LIMIT = "777";
 assert("env beats file", loadConfig().userCharLimit === 777, String(loadConfig().userCharLimit));
 delete process.env.HERMES_OPENCODE_USER_LIMIT;
+
+// an unparseable config file used to fail silently; it now warns and defaults
+await fs.writeFile(cfgPath, "{ bad json // comment\n", "utf-8");
+loadConfig();
+assert("invalid config warns and falls back to defaults", configWarnings().length === 1 && configWarnings()[0].includes("invalid JSONC"), JSON.stringify(configWarnings()));
 delete process.env.HERMES_OPENCODE_CONFIG;
 
 const storeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-cfg-store-"));

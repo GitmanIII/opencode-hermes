@@ -127,11 +127,30 @@ function stripTrailingCommas(text: string): string {
   return out;
 }
 
+/**
+ * Diagnostics from the last loadConfig() call: a config file that exists but
+ * can't be parsed used to fall back to defaults silently. A missing file is
+ * normal, not a warning.
+ */
+let lastWarnings: string[] = [];
+export function configWarnings(): string[] {
+  return lastWarnings;
+}
+
 function readFileConfig(): Partial<HermesConfig> {
+  lastWarnings = [];
+  let raw: string;
   try {
-    const parsed = JSON.parse(stripJsonc(fs.readFileSync(configFile(), "utf-8")));
+    raw = fs.readFileSync(configFile(), "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") lastWarnings.push(`cannot read ${configFile()}: ${String(err)}`);
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(stripJsonc(raw));
     return parsed && typeof parsed === "object" ? (parsed as Partial<HermesConfig>) : {};
-  } catch {
+  } catch (err) {
+    lastWarnings.push(`ignoring ${configFile()} (invalid JSONC, using defaults): ${String(err)}`);
     return {};
   }
 }

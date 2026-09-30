@@ -7,7 +7,13 @@ import type { MemoryProvider, MemoryWriteAction, ProviderHit, ReconcileOptions, 
 import type { ResolvedOperation } from "./store.ts";
 
 export class MemoryManager {
-  constructor(public readonly provider: MemoryProvider | null) {}
+  private lastReported = new Map<string, number>();
+
+  constructor(
+    public readonly provider: MemoryProvider | null,
+    /** Surface best-effort provider failures (prefetch/mirror/dream) to a logger. */
+    private onError?: (msg: string) => void,
+  ) {}
 
   activeName(): string {
     return this.provider?.name ?? "none";
@@ -17,12 +23,31 @@ export class MemoryManager {
     return this.provider?.systemPromptBlock() ?? "";
   }
 
+  /**
+   * Provider calls are best-effort (a dead embeddings server must never break a
+   * turn), but silently swallowing errors hides a dead endpoint. Report each
+   * distinct failure at most once a minute so a persistent outage is visible
+   * without flooding the log every turn.
+   */
+  private report(what: string, err: unknown): void {
+    if (!this.onError) return;
+    const now = Date.now();
+    if (now - (this.lastReported.get(what) ?? 0) < 60_000) return;
+    this.lastReported.set(what, now);
+    try {
+      this.onError(`memory provider ${what} failed: ${String(err)}`);
+    } catch {
+      /* logging must never throw */
+    }
+  }
+
   /** Automatic recall for the current user message; "" when nothing/disabled. */
   async prefetch(query: string): Promise<string> {
     if (!this.provider || !query.trim()) return "";
     try {
       return (await this.provider.prefetch(query)).text;
-    } catch {
+    } catch (err) {
+      this.report("prefetch", err);
       return "";
     }
   }
@@ -30,8 +55,8 @@ export class MemoryManager {
   async onMemoryWrite(action: MemoryWriteAction, content: string, oldText?: string): Promise<void> {
     try {
       await this.provider?.onMemoryWrite(action, content, oldText);
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      this.report(`mirror ${action}`, err);
     }
   }
 
@@ -61,7 +86,8 @@ export class MemoryManager {
     if (!this.provider?.reconcile) return undefined;
     try {
       return await this.provider.reconcile(canonical, opts);
-    } catch {
+    } catch (err) {
+      this.report("reconcile", err);
       return undefined;
     }
   }

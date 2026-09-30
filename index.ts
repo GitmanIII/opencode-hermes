@@ -23,14 +23,14 @@ import {
   setDebugLogger,
 } from "./lib/learn.ts";
 import { isInternalSession, isInternalSessionId } from "./lib/llm.ts";
-import { loadConfig } from "./lib/config.ts";
+import { configWarnings, loadConfig } from "./lib/config.ts";
 import { MEMORY_TOOL_DESCRIPTION, SESSION_SEARCH_GUIDANCE, SESSION_SEARCH_TOOL_DESCRIPTION } from "./lib/prompts.ts";
 import { sessionSearch, sessionsDbPath } from "./lib/session-search.ts";
 import { memoryRoot, skillsRoot } from "./lib/paths.ts";
 import { loadProvider, type MemoryProvider } from "./lib/memory-provider.ts";
 import { MemoryManager } from "./lib/memory-manager.ts";
 import { type MemoryOperation, MemoryStore, type Target } from "./lib/store.ts";
-import { curateSkills, listSkills, manageSkill, restoreSkill, viewSkill } from "./lib/skills.ts";
+import { curateSkills, manageSkill, restoreSkill } from "./lib/skills.ts";
 
 const LOG_FILE =
   process.env.HERMES_OPENCODE_LOG ?? path.join(process.env.HOME ?? ".", ".local", "share", "opencode", "log", "opencode-hermes.log");
@@ -44,7 +44,7 @@ const DREAM = CONFIG.dream;
 const DREAM_JUDGE = CONFIG.dreamJudge;
 
 const MEMORY_GUIDANCE =
-  "You have persistent memory across sessions. The MEMORY and USER blocks above are your saved notes and the user's profile; keep them current with the `memory` tool. Reusable procedures belong in a skill, not memory.";
+  "You have persistent memory across sessions. The MEMORY and USER blocks in this system prompt are your saved notes and the user's profile; keep them current with the `memory` tool. Reusable procedures belong in a skill, not memory.";
 
 let lastRotateCheckAt = 0;
 function rotateLog(): void {
@@ -98,6 +98,8 @@ const plugin: Plugin = async ({ client, project, directory }) => {
   const store = new MemoryStore({ memoryCharLimit: CONFIG.memoryCharLimit, userCharLimit: CONFIG.userCharLimit });
   await store.loadFromDisk().catch((err) => log(`store load failed: ${String(err)}`));
   setDebugLogger((msg) => log(msg));
+  // A malformed config file silently fell back to defaults before — say so.
+  for (const warning of configWarnings()) log(`config: ${warning}`);
 
   const currentProject = projectIdOf(project, directory);
   let provider: MemoryProvider | null = null;
@@ -117,7 +119,7 @@ const plugin: Plugin = async ({ client, project, directory }) => {
     log(`provider '${CONFIG.provider}' init failed: ${String(err)}`);
     provider = null;
   }
-  const manager = new MemoryManager(provider);
+  const manager = new MemoryManager(provider, (msg) => log(msg));
 
   log(
     `initialized (project=${currentProject}, dir=${directory}) config: memory=${CONFIG.memoryCharLimit} user=${CONFIG.userCharLimit} nudge=${CONFIG.nudgeInterval} provider=${manager.activeName()}`,
@@ -367,43 +369,9 @@ const plugin: Plugin = async ({ client, project, directory }) => {
         },
       }),
 
-      skill_list: tool({
-        description: "List available skills (procedural memory) with name, description, and category.",
-        args: {
-          category: tool.schema.string().optional().describe("Filter by category."),
-        },
-        async execute(args) {
-          try {
-            const skills = await listSkills(skillsRoot());
-            const filtered = args.category ? skills.filter((s) => s.category === args.category) : skills;
-            return JSON.stringify({
-              success: true,
-              count: filtered.length,
-              skills: filtered.map((s) => ({ name: s.name, description: s.description, category: s.category })),
-            });
-          } catch (err) {
-            return JSON.stringify({ success: false, error: String(err) });
-          }
-        },
-      }),
-
-      skill_view: tool({
-        description: "Read a skill's full SKILL.md, or one of its support files (references/, scripts/, templates/, assets/).",
-        args: {
-          name: tool.schema.string().describe("Skill name."),
-          file_path: tool.schema.string().optional().describe("Optional support file path, e.g. references/notes.md."),
-        },
-        async execute(args) {
-          try {
-            const r = await viewSkill(skillsRoot(), args.name, args.file_path);
-            if (!r.success) return JSON.stringify({ success: false, error: r.error, available_files: r.availableFiles ?? [] });
-            return JSON.stringify({ success: true, name: r.name, path: r.path, content: r.content, linked_files: r.linkedFiles ?? [] });
-          } catch (err) {
-            return JSON.stringify({ success: false, error: String(err) });
-          }
-        },
-      }),
-
+      // skill_list/skill_view are intentionally not registered: opencode itself
+      // lists skills in the system prompt and can read SKILL.md/support files
+      // with the normal read tool. The internal helpers remain for the review.
       skill_manage: tool({
         description:
           "Create or maintain a skill (procedural memory). Create when a complex task succeeded, an error was overcome, or a reusable workflow was discovered; patch when a skill is stale or missing a step. Actions: create, patch, edit, delete, write_file, remove_file.",

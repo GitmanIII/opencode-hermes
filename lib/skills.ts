@@ -217,9 +217,15 @@ export type UsageRecord = {
 };
 
 export async function readUsage(root: string): Promise<Record<string, UsageRecord>> {
+  const file = path.join(root, DEFAULT_USAGE);
   try {
-    return JSON.parse(await fs.readFile(path.join(root, DEFAULT_USAGE), "utf-8"));
-  } catch {
+    return JSON.parse(await fs.readFile(file, "utf-8"));
+  } catch (err) {
+    // A missing file is normal. A corrupt one used to be silently overwritten
+    // by the next write (losing provenance/pin/state) — move it aside instead.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      await fs.rename(file, `${file}.corrupt-${Date.now()}`).catch(() => {});
+    }
     return {};
   }
 }

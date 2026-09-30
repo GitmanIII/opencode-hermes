@@ -71,6 +71,14 @@ assert("restore moves skill back", restored.success && (await exists(path.join(R
 const afterRestore = await readUsage(ROOT);
 assert("restore clears archived state", afterRestore["old-agent"].state === "active");
 
+// a corrupt .usage.json is preserved (moved aside), not silently overwritten
+const CORRUPT = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-usage-corrupt-"));
+await fs.writeFile(path.join(CORRUPT, ".usage.json"), "{not json", "utf-8");
+const recovered = await readUsage(CORRUPT);
+assert("corrupt usage file returns empty", Object.keys(recovered).length === 0);
+assert("corrupt usage file is moved aside", (await fs.readdir(CORRUPT)).some((f) => f.startsWith(".usage.json.corrupt-")));
+await fs.rm(CORRUPT, { recursive: true, force: true });
+
 await fs.rm(ROOT, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

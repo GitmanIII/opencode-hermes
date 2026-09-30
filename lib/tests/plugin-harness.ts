@@ -71,10 +71,10 @@ assert("batch persisted to USER.md", (await fs.readFile(path.join(TMP, "USER.md"
 const skillContent = "---\nname: harness-skill\ndescription: Harness-created skill.\n---\n\n# Harness Skill\n\nBody.\n";
 const created = JSON.parse(String(await hooks.tool.skill_manage.execute({ action: "create", name: "harness-skill", category: "testing", content: skillContent }, {})));
 assert("skill_manage create succeeds", created.success === true, JSON.stringify(created));
-const listed = JSON.parse(String(await hooks.tool.skill_list.execute({}, {})));
-assert("skill_list finds created skill", listed.skills.some((s: any) => s.name === "harness-skill"), JSON.stringify(listed));
-const viewed = JSON.parse(String(await hooks.tool.skill_view.execute({ name: "harness-skill" }, {})));
-assert("skill_view returns content", viewed.success && viewed.content.includes("# Harness Skill"));
+assert(
+  "skill_list/skill_view are not registered (opencode lists skills natively)",
+  hooks.tool.skill_list === undefined && hooks.tool.skill_view === undefined,
+);
 
 // 4. no model calls in this path
 assert("no LLM session created", sessionsCreated === 0, String(sessionsCreated));

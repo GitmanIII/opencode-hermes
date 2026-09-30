@@ -31,6 +31,7 @@ addMsg("m1", "s1", "user", "tell me about the pigeon detector", 1000);
 addMsg("m2", "s1", "assistant", "the pigeon detector uses BirdNET to score audio", 1001);
 addMsg("m3", "s2", "user", "unrelated postgres backup note", 1100);
 addMsg("m4", "s3", "user", "child subagent pigeon mention", 1200); // hidden
+addMsg("m5", "s2", "assistant", "the embeddings text is stored as a blob", 1101);
 db.close();
 
 let passed = 0;
@@ -51,6 +52,10 @@ assert("discovery finds the matching session", disc.success && disc.shape === "d
 assert("discovery returns the right session", (disc.results as any[])[0]?.session_id === "s1", JSON.stringify(disc.results).slice(0, 160));
 assert("discovery hydrates matches", Array.isArray((disc.results as any[])[0]?.matches) && (disc.results as any[])[0].matches.length >= 1);
 assert("discovery hides child sessions", !JSON.stringify(disc.results).includes("s3"));
+// Must match the part's text field, not JSON structural tokens ("type":"text"):
+// querying "text" returned every text part before this fix.
+const textQ = sessionSearch(dbPath, { query: "text" });
+assert("discovery matches message text, not JSON metadata", textQ.success && (textQ.results as any[]).length === 1 && (textQ.results as any[])[0]?.session_id === "s2", JSON.stringify(textQ.results));
 // multi-word queries match terms in any order (not just the exact phrase)
 const discMulti = sessionSearch(dbPath, { query: "BirdNET audio" });
 assert("discovery matches non-contiguous terms", (discMulti.results as any[])[0]?.session_id === "s1", JSON.stringify(discMulti.results).slice(0, 160));
