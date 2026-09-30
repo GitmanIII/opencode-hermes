@@ -405,7 +405,11 @@ async function restoreSkillLocked(root: string, name: string): Promise<{ success
   } catch {
     return { success: false, error: "no archived skills." };
   }
-  const match = entries.find((e) => e === name || e.startsWith(`${name}-`));
+  // Match the exact name or a collision suffix (`name-1`, `name-2`, …) that
+  // uniqueArchivePath produces — NOT any skill whose name merely starts with
+  // `name-` (e.g. restoring `foo` must not grab `foo-bar`).
+  const collision = new RegExp(`^${escapeRe(name)}-\\d+$`);
+  const match = entries.find((e) => e === name || collision.test(e));
   if (!match) return { success: false, error: `no archived skill named '${name}'.` };
   const src = path.join(archive, match);
   const dest = path.join(root, name);
@@ -523,6 +527,10 @@ export async function manageSkill(root: string, params: ManageParams): Promise<M
     if (!params.filePath) return { success: false, error: "remove_file requires file_path." };
     const target = path.resolve(dir, params.filePath);
     if (!isInside(dir, target)) return { success: false, error: "file_path escapes the skill directory." };
+    // Only support files may be removed — SKILL.md is edited via edit/patch
+    // (deleting it would leave a skill directory opencode can no longer load).
+    const sub = path.relative(dir, target).split(path.sep)[0];
+    if (!(SUPPORT_DIRS as readonly string[]).includes(sub)) return { success: false, error: `support files must live under: ${SUPPORT_DIRS.join(", ")}.` };
     try {
       await fs.rm(target, { force: true });
     } catch {

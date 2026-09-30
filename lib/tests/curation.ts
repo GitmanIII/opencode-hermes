@@ -79,6 +79,18 @@ assert("corrupt usage file returns empty", Object.keys(recovered).length === 0);
 assert("corrupt usage file is moved aside", (await fs.readdir(CORRUPT)).some((f) => f.startsWith(".usage.json.corrupt-")));
 await fs.rm(CORRUPT, { recursive: true, force: true });
 
+// restore must match the exact archived name (or a numeric collision suffix),
+// never another skill whose name merely starts with `name-`
+const arch = path.join(ROOT, ".archive");
+await fs.mkdir(path.join(arch, "alpha-two"), { recursive: true });
+await fs.writeFile(path.join(arch, "alpha-two", "SKILL.md"), skill("alpha-two"), "utf-8");
+const rAlpha = await restoreSkill(ROOT, "alpha");
+assert("restore does not grab a prefix sibling (alpha vs alpha-two)", rAlpha.success === false, JSON.stringify(rAlpha));
+await fs.mkdir(path.join(arch, "gamma-1"), { recursive: true });
+await fs.writeFile(path.join(arch, "gamma-1", "SKILL.md"), skill("gamma"), "utf-8");
+const rGamma = await restoreSkill(ROOT, "gamma");
+assert("restore matches a numeric collision suffix (gamma-1)", rGamma.success && (await exists(path.join(ROOT, "gamma", "SKILL.md"))), JSON.stringify(rGamma));
+
 await fs.rm(ROOT, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

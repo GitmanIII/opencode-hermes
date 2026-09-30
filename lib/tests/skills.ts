@@ -88,6 +88,13 @@ r = await manageSkill(ROOT, { action: "write_file", name: "test-skill", filePath
 assert("write_file traversal rejected", !r.success);
 const v2 = await viewSkill(ROOT, "test-skill");
 assert("view lists linked files", (v2.linkedFiles ?? []).includes("references/notes.md"), JSON.stringify(v2.linkedFiles));
+r = await manageSkill(ROOT, { action: "remove_file", name: "test-skill", filePath: "references/notes.md" });
+assert("remove_file under references succeeds", r.success && !(await exists(path.join(ROOT, "testing", "test-skill", "references", "notes.md"))), r.error ?? "");
+r = await manageSkill(ROOT, { action: "remove_file", name: "test-skill", filePath: "SKILL.md" });
+assert("remove_file refuses SKILL.md", !r.success && (r.error ?? "").includes("support files"), r.error ?? "");
+r = await manageSkill(ROOT, { action: "remove_file", name: "test-skill", filePath: "../escape.md" });
+assert("remove_file traversal rejected", !r.success);
+assert("SKILL.md survives a refused remove_file", await exists(path.join(ROOT, "testing", "test-skill", "SKILL.md")));
 
 // 6. usage sidecar
 await bumpUsage(ROOT, "test-skill", "use");
