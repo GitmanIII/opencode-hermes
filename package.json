@@ -1,6 +1,6 @@
 {
   "name": "opencode-hermes",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Hermes-style persistent memory + skills for OpenCode: layered Markdown memory, self-learning review, skill authoring, and curation.",
   "type": "module",
   "main": "index.ts",
