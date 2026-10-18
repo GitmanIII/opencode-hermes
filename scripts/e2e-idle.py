@@ -20,13 +20,18 @@ scratch *session row* does land in the shared OpenCode DB (harmless).
 Usage:
     python3 scripts/e2e-idle.py
     E2E_NUDGE=2 E2E_KEEP=1 python3 scripts/e2e-idle.py   # keep the clean room
+    E2E_MODEL=opencode-go/deepseek-v4.1-flash python3 scripts/e2e-idle.py
 
-Note on models: `ctx.generate.text` uses the *global default* model unless the
-plugin pins the reviewed session's model (it does). If your global default is a
-free-tier model, an unpinned run fails with `Generate.UnavailableError`, which is
-exactly the bug the pinning fixes — you can reproduce that by setting
-E2E_CONFIG_CONTENT='{"plugins":["file:///abs/path/to/opencode-hermes"]}' with no
-`model` in it.
+Note on models: `ctx.generate.text` uses the reviewed *session's* model (the plugin
+pins it). A clean-room ACP `session/new` creates a session with **no model**, so the
+pin resolves to nothing and the call falls back to the *global default*. When that
+default is a free-tier model, the server rejects it:
+
+    Generate.UnavailableError: OpenCode's free tier can only be used from within OpenCode
+
+Set E2E_MODEL to give the clean room a model (the script then supplies a minimal
+config: the plugin, plus that model). E2E_CONFIG_CONTENT still overrides everything
+if you want to exercise your own config shape.
 """
 import json
 import os
@@ -43,6 +48,7 @@ IDLE_SECONDS = int(os.environ.get("E2E_IDLE", "15"))
 # trigger under test is still the live turn-completion event, not the timer.
 IDLE_DEBOUNCE_MS = int(os.environ.get("E2E_IDLE_DEBOUNCE_MS", "3000"))
 PLUGIN_DIR = os.environ.get("E2E_PLUGIN", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MODEL = os.environ.get("E2E_MODEL")
 HERMES_LOG = f"{ROOM}/hermes.log"
 
 shutil.rmtree(ROOM, ignore_errors=True)
@@ -77,9 +83,14 @@ env.update({
     "HERMES_NUDGE_INTERVAL": str(NUDGE),
     "HERMES_IDLE_DEBOUNCE_MS": str(IDLE_DEBOUNCE_MS),
 })
-# Override the server config when the host global default model is unusable.
-if os.environ.get("E2E_CONFIG_CONTENT"):
-    env["OPENCODE_CONFIG_CONTENT"] = os.environ["E2E_CONFIG_CONTENT"]
+# Clean-room config. E2E_CONFIG_CONTENT wins; otherwise E2E_MODEL gives the session
+# a model (a bare `session/new` has none, so the plugin's pin resolves to nothing and
+# the review would fall back to the — possibly free-tier — global default).
+config_content = os.environ.get("E2E_CONFIG_CONTENT")
+if not config_content and MODEL:
+    config_content = json.dumps({"plugins": [f"file://{PLUGIN_DIR}"], "model": MODEL})
+if config_content:
+    env["OPENCODE_CONFIG_CONTENT"] = config_content
 
 proc = subprocess.Popen(
     ["opencode", "acp"],
@@ -174,6 +185,14 @@ if os.environ.get("E2E_FULL_MEMORY"):
     memory_body = open(f"{ROOM}/memories/MEMORY.md").read() if os.path.exists(f"{ROOM}/memories/MEMORY.md") else ""
     ok = ok and "Friday" in memory_body
     print(f"  (full-store mode: new fact persisted={('Friday' in memory_body)})")
+
+if "free tier" in log_text:
+    print(
+        "\nThe review never ran: this session had no model, so ctx.generate.text fell back to the\n"
+        "global default, which is a free-tier model the server refuses. Pin one and re-run:\n"
+        f"    E2E_MODEL={MODEL or 'opencode-go/deepseek-v4.1-flash'} bun run e2e:idle"
+    )
+
 print(f"\nRESULT: {'PASS' if ok else 'FAIL'} (review ran and saved without error)")
 if not os.environ.get("E2E_KEEP"):
     shutil.rmtree(ROOM, ignore_errors=True)

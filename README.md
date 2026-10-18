@@ -138,9 +138,13 @@ bun run test        # 226 hermetic checks (no model, no network)
 bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
 #   E2E_KEEP=1         keep the clean room for inspection
 #   E2E_FULL_MEMORY=1  seed the char cap full: proves the review frees room itself
+#   E2E_MODEL=…        give the clean-room session a model (needed when the global
+#                      default is a free-tier model, which the server refuses)
 ```
 
 `scripts/e2e-idle.py` is the live counterpart of the hermetic idle-trigger check: the suite proves a `session.execution.*` event reaches `core.onIdle` and runs the review against a mock host, while the script proves a **live server** actually emits those events and the review runs end to end. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error and the dream line, and exits non-zero otherwise. It sets `HERMES_IDLE_DEBOUNCE_MS` low so it needn't wait the default 10 seconds.
+
+**Note:** a bare ACP `session/new` has **no model**, so the plugin's pin (which reads the reviewed session's model) resolves to nothing and `generate.text` falls back to the global default. If that default is a free-tier model the server rejects it (`Generate.UnavailableError`), so pass `E2E_MODEL` — otherwise the script fails with that reason printed.
 
 226 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the V2 idle trigger (turn-completion event → review, and `session.created` re-freezing the snapshot), the 4-tool surface, self-learning, review consolidation on a full store, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
 
