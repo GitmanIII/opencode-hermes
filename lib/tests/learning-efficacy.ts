@@ -10,6 +10,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runBackgroundReview } from "../learn.ts";
+import { createV1Channel } from "../llm.ts";
 import { setMemoryRoot, setSkillsRoot } from "../paths.ts";
 import { manageSkill } from "../skills.ts";
 import { MemoryStore } from "../store.ts";
@@ -70,7 +71,7 @@ const client = {
   tui: { showToast: async () => {} },
 };
 
-const res = await runBackgroundReview(client as any, store, "/tmp", "proj", "ses_eff", SK);
+const res = await runBackgroundReview(createV1Channel(client as any, "/tmp"), store, "proj", "ses_eff", SK);
 await new Promise((r) => setTimeout(r, 120));
 
 const mem = await fs.readFile(path.join(TMP, "MEMORY.md"), "utf-8");

@@ -7,6 +7,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runBackgroundReview } from "../learn.ts";
+import { createV1Channel } from "../llm.ts";
 import { setMemoryRoot, setSkillsRoot } from "../paths.ts";
 import { manageSkill } from "../skills.ts";
 import { MemoryStore } from "../store.ts";
@@ -66,7 +67,7 @@ const scenarios: [string, any[]][] = [
 let largeChars = 0;
 for (const [label, messages] of scenarios) {
   const client = makeClient(messages);
-  await runBackgroundReview(client as any, store, "/tmp", "proj", `ses_${label}`, SK);
+  await runBackgroundReview(createV1Channel(client as any, "/tmp"), store, "proj", `ses_${label}`, SK);
   const cap = client._captured();
   const chars = (cap?.body?.parts ?? []).reduce((a: number, p: any) => a + (p.text?.length ?? 0), 0);
   if (label.startsWith("large")) largeChars = chars;

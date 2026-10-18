@@ -158,7 +158,7 @@ const recProvider2 = {
     return { canonical: 1, added: 0, superseded: 0, judged: 0, removed: 3 };
   },
 };
-const dreamStats = await runDream({} as never, dreamStore, "/tmp", new MemoryManager(recProvider2 as never));
+const dreamStats = await runDream({} as never, dreamStore, new MemoryManager(recProvider2 as never));
 assert("dream GCs tombstones via hardDelete", sawHardDelete && dreamStats?.removed === 3, JSON.stringify(dreamStats));
 setMemoryRoot(TMP);
 await fs.rm(dreamRoot, { recursive: true, force: true });

@@ -8,6 +8,7 @@
  * can skip them (avoids an unbounded idle → LLM → idle loop).
  */
 import type { PluginInput } from "@opencode-ai/plugin";
+import type { ReviewChannel, TranscriptMessage } from "./channel.ts";
 
 export const INTERNAL_SESSION_TITLE = "[hm-internal]";
 
@@ -28,6 +29,67 @@ export type InternalCompletion = {
   text: string;
   error?: string;
 };
+
+// ─── V1 host channel ───
+
+type V1Message = {
+  info?: { role?: string; summary?: unknown; modelID?: string };
+  parts?: Array<{ type?: string; text?: unknown; synthetic?: boolean }>;
+};
+
+/**
+ * Adapt the V1 `PluginInput["client"]` to the host-agnostic `ReviewChannel`.
+ * Completions run through a throwaway internal session (see
+ * `completeWithInternalSession`), which is why `directory` is needed.
+ */
+export function createV1Channel(client: PluginInput["client"], directory: string): ReviewChannel {
+  return {
+    async transcript(sessionID): Promise<TranscriptMessage[]> {
+      const msgs = await client.session.messages({ path: { id: sessionID } });
+      return (msgs.data ?? []).map((raw): TranscriptMessage => {
+        const msg = raw as V1Message;
+        const text = (msg.parts ?? [])
+          .filter((p) => p?.type === "text" && typeof p.text === "string" && !p.synthetic)
+          .map((p) => (p.text as string).trim())
+          .filter(Boolean)
+          .join("\n");
+        return {
+          role: msg.info?.role === "assistant" ? "assistant" : "user",
+          text,
+          modelID: msg.info?.modelID,
+          summary: Boolean(msg.info?.summary),
+        };
+      });
+    },
+
+    complete(system, user) {
+      return completeWithInternalSession(client, directory, system, user);
+    },
+
+    async sessionTitle(sessionID) {
+      try {
+        const info = await client.session.get({ path: { id: sessionID } });
+        return info.data?.title;
+      } catch {
+        return undefined;
+      }
+    },
+
+    async injectNote(sessionID, text) {
+      await client.session.prompt({
+        path: { id: sessionID },
+        body: {
+          parts: [{ id: `prt-pm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, type: "text", text, synthetic: true }],
+          noReply: true,
+        },
+      });
+    },
+
+    async toast(message) {
+      await client.tui?.showToast({ body: { title: "opencode-hermes", message, variant: "info", duration: 4000 } });
+    },
+  };
+}
 
 /**
  * Run one LLM completion via a fresh internal session.

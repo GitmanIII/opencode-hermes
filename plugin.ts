@@ -1,10 +1,7 @@
 /**
- * opencode plugin entrypoint for local/file loading.
+ * opencode-hermes — legacy file-loading entrypoint.
  *
- * opencode's plugin loader expects a default-exported Plugin function, while
- * index.ts exports { id, server } (npm-package shape). This wrapper hands the
- * runtime the function directly.
+ * Re-exports the dual entry (`index.ts`) so an existing config that points at
+ * `plugin.ts` keeps working. New installs can point at the package directory.
  */
-import mod from "./index.ts";
-
-export default mod.server;
+export { default } from "./index.ts";

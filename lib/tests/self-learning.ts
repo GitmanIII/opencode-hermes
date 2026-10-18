@@ -7,6 +7,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runBackgroundReview } from "../learn.ts";
+import { createV1Channel } from "../llm.ts";
 import { setMemoryRoot, setSkillsRoot } from "../paths.ts";
 import { MemoryStore } from "../store.ts";
 
@@ -82,7 +83,7 @@ function mockClient() {
   await store.loadFromDisk();
   const client = mockClient();
 
-  const res = await runBackgroundReview(client as any, store, "/tmp", "sample-project", "ses_live", SKA);
+  const res = await runBackgroundReview(createV1Channel(client as any, "/tmp"), store, "sample-project", "ses_live", SKA);
   assert("review reports no error", !res.error, res.error ?? "");
   assert("review saved 2 memory + 1 skill", res.savedCount === 3 && res.savedSkills === 1, `saved=${res.savedCount} skills=${res.savedSkills}`);
   await tick();
@@ -91,7 +92,7 @@ function mockClient() {
   assert("skill op created file", await exists(path.join(SKA, "testing", "self-learning-skill", "SKILL.md")));
 
   const before = client._created();
-  const res2 = await runBackgroundReview(client as any, store, "/tmp", "sample-project", "ses_live", SKA);
+  const res2 = await runBackgroundReview(createV1Channel(client as any, "/tmp"), store, "sample-project", "ses_live", SKA);
   assert("second review is a no-op", res2.savedCount === 0 && client._created() === before, `saved=${res2.savedCount}`);
 
   await tick();

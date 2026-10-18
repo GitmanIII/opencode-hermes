@@ -8,7 +8,7 @@ A faithful, local port of [Hermes](https://github.com/weaigc/hermes)' built-in m
 - **Hard char caps** — `MEMORY.md` 2200, `USER.md` 1375 (Hermes defaults), configurable.
 - **One `memory` tool** — `target: memory|user`, `action: add|replace|remove|demote`, plus an atomic batch (`operations[]`). Adds are idempotent; the budget is checked only on the final batch result, and an over-budget write returns a *consolidate-and-retry* error rather than silently dropping anything.
 - **Self-learning review** — after N turns, on session idle, a review pass reads the conversation and writes memory **and** skills.
-- **Session recall** — `session_search` reads OpenCode's own session database (read-only) to find and read past conversations (discovery / read / scroll / browse; actual messages, no LLM). Discovery matches message text only (never JSON metadata like `"type":"text"`), any term, ranked by terms hit. A system-prompt nudge tells the model to use it when the user references the past.
+- **Session recall** — `session_search` reads OpenCode's own session database (read-only) to find and read past conversations (discovery / read / scroll / browse; actual messages, no LLM). Discovery matches message text only (never JSON metadata like `"type":"text"`), any term, ranked by terms hit. A system-prompt nudge tells the model to use it when the user references the past. Both storage layouts are supported (OpenCode 1 `session`/`message`/`part`, OpenCode 2 `session_v2`/`session_message`), detected per database.
 - **External memory provider (optional, one)** — `provider: "sqlite"` adds an unbounded local note store with **automatic prefetch** (relevant notes injected before each turn). It mirrors built-in writes: `add`/`replace` store the current fact (a replace deletes the superseded one), `remove` propagates the deletion, and `demote` evicts a fact from the capped file while keeping it recallable. Off by default (Hermes ships built-in-only).
 - **Skills (procedural memory)** — one `skill_manage` tool: authoring actions `create`/`patch`/`edit`/`delete`/`write_file`/`remove_file`, plus lifecycle actions `curate` (mark agent-created skills stale, archive very old ones; never touches user/pinned skills) and `restore`. Validation and guards: support files may only be written/removed under `references/`/`scripts/`/`templates/`/`assets/` (never `SKILL.md`), path traversal is rejected, `restore` matches the exact archived name, and the autonomous review may only edit agent-created skills. opencode itself lists skills in the system prompt and its read tool opens SKILL.md/support files, so no separate list/view tools.
 - **Dream (idle reconciliation)** — when a provider is active, an idle pass compares its store against the current `MEMORY.md`/`USER.md` and **tombstones** notes made obsolete by a canonical fact (they stop being recalled, then are garbage-collected); an optional model judge resolves ambiguous near-duplicates. `dream` on by default, `dreamJudge` off.
@@ -17,7 +17,7 @@ A faithful, local port of [Hermes](https://github.com/weaigc/hermes)' built-in m
 
 ## Requirements
 
-- OpenCode >= 1.18
+- OpenCode >= 2.0 (V2 plugin API) or >= 1.18 (V1 plugin API) — one entrypoint serves both
 - Bun (for local plugin loading and tests)
 
 ## Install
@@ -28,11 +28,19 @@ cd ~/opencode-hermes
 bun install
 ```
 
-Add the plugin to `~/.config/opencode/opencode.jsonc`:
+Add the plugin directory to `~/.config/opencode/opencode.jsonc` (OpenCode 2):
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
+  "plugins": ["file:///home/you/opencode-hermes"]
+}
+```
+
+OpenCode 2 resolves a configured plugin path as a **directory** (its `package.json` entry), so point at the clone itself, not at a single file. On OpenCode 1 the same default export works through the V1 `plugin`/file form:
+
+```jsonc
+{
   "plugin": ["file:///home/you/opencode-hermes/plugin.ts"]
 }
 ```
@@ -73,6 +81,18 @@ Or put the same keys in `~/.config/opencode/opencode-hermes.json` (JSON or JSONC
 
 `memory` · `session_search` · `skill_manage` · `provider_memory` — 4 tools (3 with no provider active; `provider_memory` is registered only when a provider is configured)
 
+## Architecture
+
+OpenCode 1 and 2 have different, incompatible plugin APIs, so the plugin is split into a host-agnostic core and two thin adapters — one default export serves both:
+
+- `lib/core.ts` — store/provider lifecycle, the frozen system-prompt snapshot, turn counting, and the idle/flush/dream triggers. Host-agnostic.
+- `lib/channel.ts` + `lib/llm.ts` — the small host surface the learning loop needs (`transcript`, `complete`, `sessionTitle`, `injectNote`, `toast`) and its V1 implementation (throwaway internal session).
+- `lib/tool-specs.ts` — each tool declared once as data, rendered to zod (V1) or JSON Schema (V2), with shared executors.
+- `index.ts` — V1 adapter: `experimental.chat.system.transform`, `chat.message`, `event`, `experimental.session.compacting`, `tool()`.
+- `v2.ts` — V2 adapter: `session.hook("context"|"prompt"|"compaction")`, `event.subscribe()`, `tool.transform()`, and `generate.text()` for completions (so V2 needs no internal sessions).
+
+`index.ts` default-exports `{ ...v2, server }`: V2 reads `id` + `setup`, V1 calls `server()`. `plugin.ts` re-exports it for file-based configs.
+
 ## How it works
 
 - Entries are `§`-delimited (same as Hermes). There is no per-entry metadata.
@@ -111,7 +131,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 bun run test
 ```
 
-176 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (4-tool surface), self-learning, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall (multi-term discovery, metadata-token filtering), dream GC.
+205 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the 4-tool surface, self-learning, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
 
 ## Attribution & License
 

@@ -5,8 +5,8 @@
  * memory + skill operations, apply them. Flush review before compaction.
  * No correction detection, no consolidation (Hermes core).
  */
-import type { PluginInput } from "@opencode-ai/plugin";
-import { completeWithInternalSession, isInternalSession } from "./llm.ts";
+import type { ReviewChannel, TranscriptMessage } from "./channel.ts";
+import { isInternalSession } from "./llm.ts";
 import {
   DIRECT_FLUSH_SYSTEM_PROMPT,
   DIRECT_REVIEW_SYSTEM_PROMPT,
@@ -140,17 +140,15 @@ async function existingSkillsSection(root: string): Promise<string> {
 }
 
 export async function runBackgroundReview(
-  client: PluginInput["client"],
+  channel: ReviewChannel,
   store: MemoryStore,
-  directory: string,
   projectId: string,
   sessionID: string,
   skillsRoot?: string,
   manager?: MemoryManager | null,
 ): Promise<{ savedCount: number; savedSkills?: number; error?: string }> {
   try {
-    const msgs = await client.session.messages({ path: { id: sessionID } });
-    const all = msgs.data ?? [];
+    const all = await channel.transcript(sessionID);
     let lastCount = reviewedUpTo.get(sessionID) ?? 0;
     if (lastCount > all.length) lastCount = 0;
     const transcript = buildTranscript(all.slice(lastCount));
@@ -158,7 +156,7 @@ export async function runBackgroundReview(
 
     const skillsSection = skillsRoot ? await existingSkillsSection(skillsRoot) : "";
     const userPrompt = `${REVIEW_USER_PROMPT}\n\n<conversation>\n${transcript}\n</conversation>\n\n${existingMemorySection(store)}${skillsSection}Active project: ${projectId || "(none)"}\nRespond with the operations JSON only.`;
-    const completion = await completeWithInternalSession(client, directory, DIRECT_REVIEW_SYSTEM_PROMPT, userPrompt);
+    const completion = await channel.complete(DIRECT_REVIEW_SYSTEM_PROMPT, userPrompt);
     if (completion.error || !completion.text) return { savedCount: 0, error: completion.error || "empty model output" };
 
     const { operations, skills, error } = extractOperations(completion.text);
@@ -183,22 +181,21 @@ export async function runBackgroundReview(
 }
 
 export async function runFlushReview(
-  client: PluginInput["client"],
+  channel: ReviewChannel,
   store: MemoryStore,
-  directory: string,
   projectId: string,
   sessionID: string,
   skillsRoot?: string,
   manager?: MemoryManager | null,
 ): Promise<{ savedCount: number; savedSkills?: number; error?: string }> {
   try {
-    const msgs = await client.session.messages({ path: { id: sessionID } });
-    const transcript = buildTranscript((msgs.data ?? []).slice(-20));
+    const all = await channel.transcript(sessionID);
+    const transcript = buildTranscript(all.slice(-20));
     if (!transcript.trim()) return { savedCount: 0 };
 
     const skillsSection = skillsRoot ? await existingSkillsSection(skillsRoot) : "";
     const userPrompt = `Session ${sessionID} (project: ${projectId || "(none)"}) is being compressed.\n\n<conversation>\n${transcript}\n</conversation>\n\n${existingMemorySection(store)}${skillsSection}Respond with the operations JSON only.`;
-    const completion = await completeWithInternalSession(client, directory, DIRECT_FLUSH_SYSTEM_PROMPT, userPrompt);
+    const completion = await channel.complete(DIRECT_FLUSH_SYSTEM_PROMPT, userPrompt);
     if (completion.error || !completion.text) return { savedCount: 0, error: completion.error || "empty model output" };
 
     const { operations, skills, error } = extractOperations(completion.text);
@@ -228,9 +225,8 @@ export async function runFlushReview(
  * Returns undefined when no provider supports `reconcile`.
  */
 export async function runDream(
-  client: PluginInput["client"],
+  channel: ReviewChannel,
   store: MemoryStore,
-  directory: string,
   manager?: MemoryManager | null,
   useJudge = false,
 ): Promise<ReconcileStats | undefined> {
@@ -239,9 +235,7 @@ export async function runDream(
   if (!canonical.length) return undefined;
   const judge = useJudge
     ? async (canonicalText: string, noteText: string) => {
-        const out = await completeWithInternalSession(
-          client,
-          directory,
+        const out = await channel.complete(
           DREAM_JUDGE_SYSTEM_PROMPT,
           `CURRENT FACT:\n${canonicalText}\n\nOLDER NOTE:\n${noteText}\n\nAnswer with one word: YES or NO.`,
         );
@@ -272,25 +266,17 @@ function debug(msg: string): void {
 
 // ─── Transcript builder ───
 
-type MessageLike = {
-  info: { role?: string; summary?: unknown; modelID?: string };
-  parts: Array<{ type: string; text?: string; synthetic?: boolean }>;
-};
-
 const TRANSCRIPT_MAX_CHARS = 30_000;
 
-function buildTranscript(messages: MessageLike[]): string {
+function buildTranscript(messages: TranscriptMessage[]): string {
   const lines: string[] = [];
   for (const msg of messages) {
-    if (msg.info.summary) continue;
-    const text = (msg.parts ?? [])
-      .filter((p) => p.type === "text" && typeof p.text === "string" && p.text.trim() && !p.synthetic)
-      .map((p) => p.text!.trim())
-      .join("\n");
+    if (msg.summary) continue;
+    const text = msg.text.trim();
     if (!text) continue;
-    const role = msg.info.role === "assistant" ? "assistant" : "user";
-    if (msg.info.role === "assistant" && msg.info.modelID) {
-      lines.push(`<assistant model="${msg.info.modelID}">\n${text}\n</assistant>`);
+    const role = msg.role === "assistant" ? "assistant" : "user";
+    if (msg.role === "assistant" && msg.modelID) {
+      lines.push(`<assistant model="${msg.modelID}">\n${text}\n</assistant>`);
     } else {
       lines.push(`<${role}>\n${text}\n</${role}>`);
     }

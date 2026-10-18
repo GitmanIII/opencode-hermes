@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["index.ts", "lib/**/*.ts", "skills/**/*.ts", "tests/**/*.ts"]
+  "include": ["index.ts", "v2.ts", "plugin.ts", "lib/**/*.ts", "skills/**/*.ts", "tests/**/*.ts"]
 }
