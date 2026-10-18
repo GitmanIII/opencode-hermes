@@ -15,6 +15,10 @@ export type ProviderContext = {
   options?: Record<string, unknown>;
   /** Current project id, for providers that scope notes. */
   projectId?: string;
+  /** Host log sink. Config JSON can't carry functions, so providers should use this. */
+  log?: (msg: string) => void;
+  /** Host warn sink (falls back to the log sink when absent). */
+  warn?: (msg: string) => void;
 };
 
 export type ProviderHit = { id: string; text: string; score: number };

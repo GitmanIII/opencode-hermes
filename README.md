@@ -58,6 +58,7 @@ Precedence: **environment variables > config file > defaults**. Defaults match H
 | `HERMES_OPENCODE_MEMORY_LIMIT` | `2200` | `MEMORY.md` char limit |
 | `HERMES_OPENCODE_USER_LIMIT` | `1375` | `USER.md` char limit |
 | `HERMES_NUDGE_INTERVAL` | `10` | turns between background reviews |
+| `HERMES_IDLE_DEBOUNCE_MS` | `10000` | quiet period after the last turn before the review runs |
 | `HERMES_OPENCODE_LOG` | `~/.local/share/opencode/log/opencode-hermes.log` | log file |
 | `HERMES_OPENCODE_SESSIONS_DB` | `~/.local/share/opencode/opencode.db` | session DB for `session_search` (read-only) |
 | `HERMES_OPENCODE_PROVIDER` | `none` | external long-term memory provider: `none` \| `sqlite` |
@@ -114,7 +115,7 @@ Two V2 details worth knowing, both verified against 2.0.32:
 - a `file://` URL / path to a module exporting `createProvider(options)` or a default factory, or
 - an npm package name.
 
-Provider options go under `providerOptions`; `initialize()` receives `{ memoryRoot, providerPath, prefetchLimit, options, projectId }`. One provider at a time. It's used for **automatic prefetch** (before each user message), **mirrors built-in memory writes** from both the `memory` tool and the background/flush review (`add`/`replace`/`remove`/`demote` — removals propagate, evictions stay recallable), and backs the `provider_memory` tool. Providers that scope notes can implement `setProject(id)`.
+Provider options go under `providerOptions`; `initialize()` receives `{ memoryRoot, providerPath, prefetchLimit, options, projectId, log, warn }`. `log`/`warn` are the host's sinks — config JSON can't carry functions, so a provider that wants its diagnostics in `opencode-hermes.log` (rather than `console`) should use them. One provider at a time. It's used for **automatic prefetch** (before each user message), **mirrors built-in memory writes** from both the `memory` tool and the background/flush review (`add`/`replace`/`remove`/`demote` — removals propagate, evictions stay recallable), and backs the `provider_memory` tool. Providers that scope notes can implement `setProject(id)`.
 
 **Companion:** [**opencode-hermes-embeddings**](https://github.com/GitmanIII/opencode-hermes-embeddings) — semantic recall on your own GPU via HuggingFace **text-embeddings-inference** (`nomic-embed-text-v1.5`, 768-dim), project-scoped.
 
@@ -133,15 +134,15 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 ## Testing
 
 ```bash
-bun run test        # 219 hermetic checks (no model, no network)
+bun run test        # 226 hermetic checks (no model, no network)
 bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
 #   E2E_KEEP=1         keep the clean room for inspection
 #   E2E_FULL_MEMORY=1  seed the char cap full: proves the review frees room itself
 ```
 
-`scripts/e2e-idle.py` is the one thing the hermetic suite cannot cover: the background review only fires when a **live server** observes a finished turn and the 10-second debounce elapses. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error and the dream line, and exits non-zero otherwise.
+`scripts/e2e-idle.py` is the live counterpart of the hermetic idle-trigger check: the suite proves a `session.execution.*` event reaches `core.onIdle` and runs the review against a mock host, while the script proves a **live server** actually emits those events and the review runs end to end. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error and the dream line, and exits non-zero otherwise. It sets `HERMES_IDLE_DEBOUNCE_MS` low so it needn't wait the default 10 seconds.
 
-219 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the 4-tool surface, self-learning, review consolidation on a full store, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
+226 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the V2 idle trigger (turn-completion event → review, and `session.created` re-freezing the snapshot), the 4-tool surface, self-learning, review consolidation on a full store, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
 
 ## Attribution & License
 

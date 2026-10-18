@@ -2,7 +2,7 @@
 """Live verification of the V2 idle path: session -> review -> memory + dream.
 
 Hermetic suites cannot cover this: the review only fires when a *live server*
-observes a finished turn and the 10s debounce elapses, and the completion runs
+observes a finished turn and the idle debounce elapses, and the completion runs
 against a real model. This drives a clean-room `opencode acp` instance (ACP
 JSON-RPC over stdio is the only long-lived server in OpenCode 2) so the process
 outlives the final prompt and the plugin can react.
@@ -38,7 +38,10 @@ import time
 
 ROOM = os.environ.get("E2E_ROOM", "/tmp/opencode/ohe-v2-e2e")
 NUDGE = int(os.environ.get("E2E_NUDGE", "2"))
-IDLE_SECONDS = int(os.environ.get("E2E_IDLE", "35"))
+IDLE_SECONDS = int(os.environ.get("E2E_IDLE", "15"))
+# Shorten the plugin's quiet period (default 10s) so the live check is quick; the
+# trigger under test is still the live turn-completion event, not the timer.
+IDLE_DEBOUNCE_MS = int(os.environ.get("E2E_IDLE_DEBOUNCE_MS", "3000"))
 PLUGIN_DIR = os.environ.get("E2E_PLUGIN", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HERMES_LOG = f"{ROOM}/hermes.log"
 
@@ -72,6 +75,7 @@ env.update({
     "HERMES_OPENCODE_SKILLS_ROOT": f"{ROOM}/skills",
     "HERMES_OPENCODE_LOG": HERMES_LOG,
     "HERMES_NUDGE_INTERVAL": str(NUDGE),
+    "HERMES_IDLE_DEBOUNCE_MS": str(IDLE_DEBOUNCE_MS),
 })
 # Override the server config when the host global default model is unusable.
 if os.environ.get("E2E_CONFIG_CONTENT"):
@@ -138,7 +142,7 @@ for n, text in enumerate(prompts, start=1):
     resp = wait_for(10 + n, 180)
     print(f"prompt {n}: stopReason={(resp.get('result') or {}).get('stopReason')}")
 
-print(f"idling {IDLE_SECONDS}s (nudge={NUDGE}, review debounce=10s)...")
+print(f"idling {IDLE_SECONDS}s (nudge={NUDGE}, review debounce={IDLE_DEBOUNCE_MS}ms)...")
 time.sleep(IDLE_SECONDS)
 
 proc.terminate()

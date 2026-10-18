@@ -21,8 +21,12 @@ setMemoryRoot(TMP);
 setSkillsRoot(SKILLS);
 process.env.HERMES_OPENCODE_LOG = path.join(TMP, "test.log");
 // Hermetic: never read the user's real config (it selects the embeddings
-// provider, which would register provider_memory and make the surface assertion flaky).
-process.env.HERMES_OPENCODE_CONFIG = path.join(TMP, "no-such-config.json");
+// provider, which would register provider_memory and make the surface assertion
+// flaky). The fixture keeps `provider: none` but shortens the review cadence so
+// the idle trigger can be exercised without a 10s debounce.
+const CFG = path.join(TMP, "test-config.json");
+await fs.writeFile(CFG, `{ "nudgeInterval": 1, "idleDebounceMs": 25 }\n`, "utf-8");
+process.env.HERMES_OPENCODE_CONFIG = CFG;
 delete process.env.HERMES_OPENCODE_PROVIDER;
 
 const pluginModule = (await import("../../plugin.ts")).default;
@@ -48,6 +52,24 @@ function mockContext() {
   const synthetic: string[] = [];
   const generated: string[] = [];
   const messages: Any[] = [{ type: "user", text: "please use 4-space indent" }];
+
+  // Controllable event queue: the plugin's subscriber loop parks on `next()`
+  // until a test pushes an event. Without this the idle trigger (the v0.10.1
+  // fix — a review that runs when a turn completes) has no hermetic coverage at
+  // all, so a broken event name would pass the suite.
+  const queued: Any[] = [];
+  let waiter: ((result: Any) => void) | null = null;
+  const events = {
+    push(event: Any) {
+      if (waiter) {
+        const resolve = waiter;
+        waiter = null;
+        resolve({ value: event, done: false });
+      } else {
+        queued.push(event);
+      }
+    },
+  };
 
   const ctx: Any = {
     app: { name: "opencode", version: "2.0.32", channel: "latest" },
@@ -86,13 +108,19 @@ function mockContext() {
     },
     event: {
       subscribe: ({ signal }: { signal?: AbortSignal } = {}) => ({
-        [Symbol.asyncIterator]: () => ({ next: () => new Promise((_r, reject) => {
-          signal?.addEventListener("abort", () => reject(new Error("aborted")));
-        }) }),
+        [Symbol.asyncIterator]: () => ({
+          next: () => {
+            if (queued.length) return Promise.resolve({ value: queued.shift(), done: false });
+            return new Promise((resolve, reject) => {
+              waiter = resolve;
+              signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            });
+          },
+        }),
       }),
     },
   };
-  return { ctx, hooks, tools, synthetic, generated, messages };
+  return { ctx, hooks, tools, synthetic, generated, messages, events };
 }
 
 const harness = mockContext();
@@ -135,9 +163,42 @@ assert("V2 registers a prompt hook", typeof promptHook === "function");
 await promptHook({ sessionID: "ses_v2", prompt: { text: "hello" } });
 assert("V2 prompt hook makes no synthetic injection without a provider", harness.synthetic.length === 0, JSON.stringify(harness.synthetic));
 
-// 5. event subscription + cleanup
-assert("V2 registers an idle handler via events", harness.hooks.size === 3, [...harness.hooks.keys()].join(","));
+// 5. the event subscription drives the idle trigger (the v0.10.1 fix): a turn
+//    completion must reach core.onIdle and run the review, and a new session must
+//    re-freeze the injected memory snapshot. Both were previously uncovered.
+assert("V2 registers 3 session hooks", harness.hooks.size === 3, [...harness.hooks.keys()].join(","));
 assert("V2 setup returns a cleanup function", typeof cleanup === "function");
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (cond: () => boolean | Promise<boolean>, ms = 2000) => {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (await cond()) return true;
+    await sleep(10);
+  }
+  return await cond();
+};
+const snapshotText = async () => {
+  const event: Any = { system: [] as Array<{ type: string; text: string }> };
+  await harness.hooks.get("context")(event);
+  return (event.system as Array<{ text: string }>).map((p) => p.text).join("\n");
+};
+
+// session.created → store refresh + snapshot re-freeze: the fact added in
+// section 2 is on disk but not in the snapshot frozen at setup.
+const frozen = await snapshotText();
+assert("V2 snapshot is frozen before a new session", !frozen.includes("v2 harness fact"), frozen.slice(0, 80));
+harness.events.push({ type: "session.created", data: { sessionID: "ses_v2" } });
+assert("V2 session.created refreshes the injected snapshot", await waitFor(async () => (await snapshotText()).includes("v2 harness fact")));
+
+// session.execution.succeeded → core.onIdle → review. The fixture config sets
+// nudgeInterval=1 and idleDebounceMs=25, so section 4's single turn suffices.
+harness.events.push({ type: "session.execution.succeeded", data: { sessionID: "ses_v2" } });
+assert("V2 turn completion runs the review", await waitFor(() => harness.generated.length > 0), `generate.text calls=${harness.generated.length}`);
+const logText = await fs.readFile(path.join(TMP, "test.log"), "utf-8");
+assert("V2 review is logged", logText.includes("background review:"), logText.split("\n").slice(-3).join(" | "));
+
+if (typeof cleanup === "function") await cleanup();
 
 await fs.rm(TMP, { recursive: true, force: true });
 await fs.rm(SKILLS, { recursive: true, force: true });

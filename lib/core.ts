@@ -8,7 +8,8 @@
  * `ReviewChannel` and the hook/tool registration.
  */
 import * as path from "node:path";
-import type { ReviewChannel } from "./channel.ts";import { configWarnings, loadConfig } from "./config.ts";
+import type { ReviewChannel } from "./channel.ts";
+import { configWarnings, loadConfig } from "./config.ts";
 import { clearSession, clearSessionState, runBackgroundReview, runDream, runFlushReview, setDebugLogger } from "./learn.ts";
 import { isInternalSession as isInternalSessionTitle } from "./llm.ts";
 import { MemoryManager } from "./memory-manager.ts";
@@ -18,7 +19,6 @@ import { SESSION_SEARCH_GUIDANCE } from "./prompts.ts";
 import { MemoryStore } from "./store.ts";
 import { createToolExecutors, type ToolExecutors } from "./tool-specs.ts";
 
-const IDLE_DEBOUNCE_MS = 10_000;
 const REVIEW_MIN_INTERVAL_MS = 30 * 60 * 1000;
 
 const MEMORY_GUIDANCE =
@@ -54,6 +54,7 @@ export async function createHermesCore(opts: HermesCoreOptions): Promise<HermesC
   const isInternalSession = opts.isInternalSession ?? (() => false);
   const CONFIG = loadConfig();
   const NUDGE_INTERVAL = CONFIG.nudgeInterval;
+  const IDLE_DEBOUNCE_MS = CONFIG.idleDebounceMs;
   const DREAM = CONFIG.dream;
   const DREAM_JUDGE = CONFIG.dreamJudge;
 
@@ -73,6 +74,11 @@ export async function createHermesCore(opts: HermesCoreOptions): Promise<HermesC
         prefetchLimit: CONFIG.prefetchLimit,
         options: CONFIG.providerOptions,
         projectId,
+        // The host's log is the only way a provider's diagnostics (startup index
+        // report, dims warnings) reach opencode-hermes.log — config JSON can't
+        // carry functions, so providers fall back to console.* without this.
+        log: (msg) => log(msg),
+        warn: (msg) => log(`provider warning: ${msg}`),
       });
       provider.setProject?.(projectId);
     }

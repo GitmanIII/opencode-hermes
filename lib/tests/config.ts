@@ -25,6 +25,7 @@ const ENV_KEYS = [
   "HERMES_OPENCODE_MEMORY_LIMIT",
   "HERMES_OPENCODE_USER_LIMIT",
   "HERMES_NUDGE_INTERVAL",
+  "HERMES_IDLE_DEBOUNCE_MS",
   "HERMES_OPENCODE_PROVIDER",
   "HERMES_OPENCODE_CONFIG",
 ];
@@ -39,6 +40,7 @@ process.env.HERMES_OPENCODE_CONFIG = path.join(os.tmpdir(), `hermes-cfg-missing-
 
 assert("default memory limit is 2200 (Hermes)", HERMES_DEFAULTS.memoryCharLimit === 2200);
 assert("default user limit is 1375 (Hermes)", HERMES_DEFAULTS.userCharLimit === 1375);
+assert("default idle debounce is 10s", HERMES_DEFAULTS.idleDebounceMs === 10_000, String(HERMES_DEFAULTS.idleDebounceMs));
 const base = loadConfig();
 assert("loadConfig defaults match Hermes", base.memoryCharLimit === 2200 && base.userCharLimit === 1375, JSON.stringify(base));
 assert("provider defaults to none (Hermes built-in only)", base.provider === "none", base.provider);
@@ -49,6 +51,14 @@ delete process.env.HERMES_OPENCODE_PROVIDER;
 process.env.HERMES_OPENCODE_MEMORY_LIMIT = "5000";
 assert("env overrides memory limit", loadConfig().memoryCharLimit === 5000, String(loadConfig().memoryCharLimit));
 delete process.env.HERMES_OPENCODE_MEMORY_LIMIT;
+
+process.env.HERMES_NUDGE_INTERVAL = "3";
+assert("env overrides nudge interval", loadConfig().nudgeInterval === 3, String(loadConfig().nudgeInterval));
+delete process.env.HERMES_NUDGE_INTERVAL;
+
+process.env.HERMES_IDLE_DEBOUNCE_MS = "250";
+assert("env overrides idle debounce", loadConfig().idleDebounceMs === 250, String(loadConfig().idleDebounceMs));
+delete process.env.HERMES_IDLE_DEBOUNCE_MS;
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-cfg-"));
 const cfgPath = path.join(dir, "opencode-hermes.json");

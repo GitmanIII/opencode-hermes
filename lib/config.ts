@@ -18,6 +18,11 @@ export type HermesConfig = {
   memoryCharLimit: number;
   userCharLimit: number;
   nudgeInterval: number;
+  /**
+   * Quiet period after the last turn before the background review runs. Also the
+   * seam that makes the idle trigger hermetically testable (set it low in tests).
+   */
+  idleDebounceMs: number;
   provider: string;
   providerPath?: string;
   /** Provider-specific options passed through to the provider's initialize(). */
@@ -33,6 +38,7 @@ export const HERMES_DEFAULTS: HermesConfig = {
   memoryCharLimit: 2200,
   userCharLimit: 1375,
   nudgeInterval: 10,
+  idleDebounceMs: 10_000,
   provider: "none",
   providerOptions: {},
   prefetchLimit: 5,
@@ -184,6 +190,10 @@ export function loadConfig(): HermesConfig {
       positiveInt(env.HERMES_OPENCODE_USER_LIMIT) ?? positiveInt(file.userCharLimit) ?? HERMES_DEFAULTS.userCharLimit,
     nudgeInterval:
       positiveInt(env.HERMES_NUDGE_INTERVAL) ?? positiveInt(file.nudgeInterval) ?? HERMES_DEFAULTS.nudgeInterval,
+    idleDebounceMs:
+      positiveInt(env.HERMES_IDLE_DEBOUNCE_MS) ??
+      positiveInt(file.idleDebounceMs) ??
+      HERMES_DEFAULTS.idleDebounceMs,
     provider: stringValue(env.HERMES_OPENCODE_PROVIDER) ?? stringValue(file.provider) ?? HERMES_DEFAULTS.provider,
     providerPath: stringValue(env.HERMES_OPENCODE_PROVIDER_PATH) ?? stringValue(file.providerPath),
     providerOptions:
