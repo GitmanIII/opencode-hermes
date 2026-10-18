@@ -156,7 +156,7 @@ export async function runBackgroundReview(
 
     const skillsSection = skillsRoot ? await existingSkillsSection(skillsRoot) : "";
     const userPrompt = `${REVIEW_USER_PROMPT}\n\n<conversation>\n${transcript}\n</conversation>\n\n${existingMemorySection(store)}${skillsSection}Active project: ${projectId || "(none)"}\nRespond with the operations JSON only.`;
-    const completion = await channel.complete(DIRECT_REVIEW_SYSTEM_PROMPT, userPrompt);
+    const completion = await channel.complete(DIRECT_REVIEW_SYSTEM_PROMPT, userPrompt, sessionID);
     if (completion.error || !completion.text) return { savedCount: 0, error: completion.error || "empty model output" };
 
     const { operations, skills, error } = extractOperations(completion.text);
@@ -195,7 +195,7 @@ export async function runFlushReview(
 
     const skillsSection = skillsRoot ? await existingSkillsSection(skillsRoot) : "";
     const userPrompt = `Session ${sessionID} (project: ${projectId || "(none)"}) is being compressed.\n\n<conversation>\n${transcript}\n</conversation>\n\n${existingMemorySection(store)}${skillsSection}Respond with the operations JSON only.`;
-    const completion = await channel.complete(DIRECT_FLUSH_SYSTEM_PROMPT, userPrompt);
+    const completion = await channel.complete(DIRECT_FLUSH_SYSTEM_PROMPT, userPrompt, sessionID);
     if (completion.error || !completion.text) return { savedCount: 0, error: completion.error || "empty model output" };
 
     const { operations, skills, error } = extractOperations(completion.text);
@@ -229,6 +229,7 @@ export async function runDream(
   store: MemoryStore,
   manager?: MemoryManager | null,
   useJudge = false,
+  sessionID?: string,
 ): Promise<ReconcileStats | undefined> {
   if (!manager?.provider?.reconcile) return undefined;
   const canonical = [...store.getEntries("memory"), ...store.getEntries("user")].filter(Boolean);
@@ -238,6 +239,7 @@ export async function runDream(
         const out = await channel.complete(
           DREAM_JUDGE_SYSTEM_PROMPT,
           `CURRENT FACT:\n${canonicalText}\n\nOLDER NOTE:\n${noteText}\n\nAnswer with one word: YES or NO.`,
+          sessionID,
         );
         return /^\s*yes/i.test(out.text ?? "");
       }

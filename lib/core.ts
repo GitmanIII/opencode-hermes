@@ -166,7 +166,7 @@ export async function createHermesCore(opts: HermesCoreOptions): Promise<HermesC
             // (once per session, only when the active provider supports it).
             if (DREAM && !dreamedSessions.has(sessionID)) {
               dreamedSessions.add(sessionID);
-              const stats = await runDream(channel, store, manager, DREAM_JUDGE);
+              const stats = await runDream(channel, store, manager, DREAM_JUDGE, sessionID);
               if (stats) log(`dream: canonical=${stats.canonical} added=${stats.added} superseded=${stats.superseded} judged=${stats.judged} removed=${stats.removed}`);
             }
           } catch (err) {

@@ -63,6 +63,8 @@ export function createV1Channel(client: PluginInput["client"], directory: string
     },
 
     complete(system, user) {
+      // `_reviewedSessionID` is ignored: the V1 path drives a throwaway internal
+      // session, which already inherits the default agent's model.
       return completeWithInternalSession(client, directory, system, user);
     },
 

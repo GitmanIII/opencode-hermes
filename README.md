@@ -91,6 +91,11 @@ OpenCode 1 and 2 have different, incompatible plugin APIs, so the plugin is spli
 - `index.ts` — V1 adapter: `experimental.chat.system.transform`, `chat.message`, `event`, `experimental.session.compacting`, `tool()`.
 - `v2.ts` — V2 adapter: `session.hook("context"|"prompt"|"compaction")`, `event.subscribe()`, `tool.transform()`, and `generate.text()` for completions (so V2 needs no internal sessions).
 
+Two V2 details worth knowing, both verified against 2.0.32:
+
+- **The idle trigger.** V2's transient `session.idle` event never reaches plugin subscribers (the server writes an `idle` message row and emits `session.execution.succeeded`, but no `session.idle`/`session.status`), so the review/dream trigger on the durable `session.execution.{succeeded,failed,interrupted}` events — the same moment V1's `session.idle` fired.
+- **The review's model.** `generate.text` without a model uses the *global default*, which may be an unrelated free-tier model that rejects the request; completions therefore pin the reviewed session's own model (`session.get().model`).
+
 `index.ts` default-exports `{ ...v2, server }`: V2 reads `id` + `setup`, V1 calls `server()`. `plugin.ts` re-exports it for file-based configs.
 
 ## How it works
@@ -128,8 +133,11 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 ## Testing
 
 ```bash
-bun run test
+bun run test        # 205 hermetic checks (no model, no network)
+bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
 ```
+
+`scripts/e2e-idle.py` is the one thing the hermetic suite cannot cover: the background review only fires when a **live server** observes a finished turn and the 10-second debounce elapses. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error and the dream line, and exits non-zero otherwise.
 
 205 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the 4-tool surface, self-learning, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
 

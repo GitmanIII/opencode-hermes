@@ -66,16 +66,37 @@ export function toTranscript(messages: readonly V2Message[]): TranscriptMessage[
 
 /** Adapt the V2 plugin context to the host-agnostic `ReviewChannel`. */
 function createV2Channel(ctx: Plugin.Context, log: (msg: string) => void): ReviewChannel {
+  // Review completions must run on the model the reviewed session actually used.
+  // `generate.text` without a model picks the global default, which here is a
+  // free-tier model that rejects requests ("free tier can only be used from
+  // within OpenCode") — so the review would run and save nothing. Resolve once
+  // per session; the dream judge calls complete() many times.
+  const modelOf = new Map<string, { id: string; providerID: string; variant?: string } | undefined>();
+
+  async function reviewedModel(sessionID: string | undefined) {
+    if (!sessionID) return undefined;
+    if (modelOf.has(sessionID)) return modelOf.get(sessionID);
+    let model: { id: string; providerID: string; variant?: string } | undefined;
+    try {
+      model = (await ctx.session.get({ sessionID })).model;
+    } catch {
+      model = undefined;
+    }
+    modelOf.set(sessionID, model);
+    return model;
+  }
+
   return {
     async transcript(sessionID) {
       return toTranscript((await ctx.session.context({ sessionID })) as V2Message[]);
     },
 
-    async complete(system, user) {
+    async complete(system, user, sessionID) {
       try {
         // V2 generates without a session; fold the system prompt into the only
-        // free-form input and let the default model resolve.
-        const out = await ctx.generate.text({ prompt: `${system}\n\n${user}` });
+        // free-form input and pin the reviewed session's model.
+        const model = await reviewedModel(sessionID);
+        const out = await ctx.generate.text({ ...(model ? { model } : {}), prompt: `${system}\n\n${user}` });
         return { text: (out.text ?? "").trim() };
       } catch (err) {
         return { text: "", error: String(err) };
@@ -128,14 +149,25 @@ export const plugin = Plugin.define({
       if (note) event.system.push({ type: "text", text: note });
     });
 
-    // ─── Background learning on idle ───
+    // ─── Background learning when a turn finishes ───
+    // V2 reports "the session is idle again" with the durable execution events.
+    // The schema's `session.idle` event is transient and does not reach plugin
+    // subscribers in 2.0.32 (verified: the server writes an `idle` message row
+    // and emits execution.succeeded, but no session.idle/status), so trigger on
+    // the execution result instead — same moment V1's `session.idle` fired.
     const controller = new AbortController();
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
           if (event.type === "session.created") await core.onSessionCreated();
           else if (event.type === "session.deleted") core.onSessionDeleted(event.data.sessionID);
-          else if (event.type === "session.idle") await core.onIdle(event.data.sessionID);
+          else if (
+            event.type === "session.execution.succeeded" ||
+            event.type === "session.execution.failed" ||
+            event.type === "session.execution.interrupted"
+          ) {
+            await core.onIdle(event.data.sessionID);
+          }
         }
       } catch (err) {
         if (!controller.signal.aborted) log(`event subscription failed: ${String(err)}`);

@@ -23,8 +23,13 @@ export type ChannelCompletion = { text: string; error?: string };
 export interface ReviewChannel {
   /** Every message of a session, oldest first (review cursors index into this). */
   transcript(sessionID: string): Promise<TranscriptMessage[]>;
-  /** One-shot completion with no tools and no durable session history. */
-  complete(system: string, user: string): Promise<ChannelCompletion>;
+  /**
+   * One-shot completion with no tools and no durable session history.
+   * `sessionID` is advisory: it lets a host reuse that session's model instead of
+   * a global default (V2 `generate.text` otherwise picks the configured default,
+   * which may be an unrelated free-tier model).
+   */
+  complete(system: string, user: string, sessionID?: string): Promise<ChannelCompletion>;
   /** Session title, used to skip hermes' own internal review sessions. */
   sessionTitle(sessionID: string): Promise<string | undefined>;
   /** Inject a note into a session without requesting a reply. */
