@@ -146,6 +146,11 @@ export class MemoryStore {
     return `${target}: ${pct}% — ${current}/${limit} chars (${this.entries[target].length} entries)`;
   }
 
+  /** Current entry length for a target (excludes the header); compare with `charLimit`. */
+  chars(target: Target): number {
+    return this.charCount(target);
+  }
+
   /** Hermes-style block for the system prompt (whole file, header + usage). */
   formatBlock(target: Target): string {
     const content = this.entries[target].join(ENTRY_DELIMITER);

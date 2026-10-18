@@ -46,10 +46,21 @@ shutil.rmtree(ROOM, ignore_errors=True)
 os.makedirs(f"{ROOM}/memories", exist_ok=True)
 os.makedirs(f"{ROOM}/skills", exist_ok=True)
 # Seed canonical memory so the dream has something to reconcile against.
+# E2E_FULL_MEMORY=1 fills the cap instead, so the review must free room itself
+# (the consolidation retry) to save anything.
+CANARY = "E2E canary: the scratch memory root is /tmp and holds exactly one fact."
+HEADER = "MEMORY (your personal notes) [0% — 0/2200 chars]\n══════════════════════════════════════════════\n"
+if os.environ.get("E2E_FULL_MEMORY"):
+    # Size to ~98% of the 2200 cap (the store counts the header as part of entry 0).
+    filler = "E2E filler entry (safe to demote): " + ("z" * 2000)
+    memory_seed = f"{HEADER}{CANARY}\n§\n{filler}\n"
+    if len(memory_seed) < 2000:
+        sys.exit(f"E2E_FULL_MEMORY seed is only {len(memory_seed)} chars — the store would not be full")
+    print(f"full-store seed: {len(memory_seed)}/2200 chars (~{len(memory_seed) * 100 // 2200}%)")
+else:
+    memory_seed = f"{HEADER}{CANARY}\n"
 with open(f"{ROOM}/memories/MEMORY.md", "w") as f:
-    f.write("MEMORY (your personal notes) [0% — 0/2200 chars]\n"
-            "══════════════════════════════════════════════\n"
-            "E2E canary: the scratch memory root is /tmp and holds exactly one fact.\n")
+    f.write(memory_seed)
 with open(f"{ROOM}/memories/USER.md", "w") as f:
     f.write("USER PROFILE (who the user is) [0% — 1/1375 chars]\n"
             "══════════════════════════════════════════════\n"
@@ -154,6 +165,11 @@ for name in ("MEMORY.md", "USER.md"):
         print("\n".join("  " + l for l in open(path).read().splitlines() if l.strip()))
 
 ok = "background review: memory=" in log_text and "err=" not in log_text.split("background review:")[-1].split("\n")[0]
+if os.environ.get("E2E_FULL_MEMORY"):
+    # The store was full: saving anything means the consolidation retry worked.
+    memory_body = open(f"{ROOM}/memories/MEMORY.md").read() if os.path.exists(f"{ROOM}/memories/MEMORY.md") else ""
+    ok = ok and "Friday" in memory_body
+    print(f"  (full-store mode: new fact persisted={('Friday' in memory_body)})")
 print(f"\nRESULT: {'PASS' if ok else 'FAIL'} (review ran and saved without error)")
 if not os.environ.get("E2E_KEEP"):
     shutil.rmtree(ROOM, ignore_errors=True)

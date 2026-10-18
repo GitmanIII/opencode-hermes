@@ -7,7 +7,7 @@ A faithful, local port of [Hermes](https://github.com/weaigc/hermes)' built-in m
 - **Two files, injected whole** — `MEMORY.md` (your notes) and `USER.md` (the user profile) are rendered into the system prompt every session, with Hermes' headers and a per-session frozen snapshot. No retrieval.
 - **Hard char caps** — `MEMORY.md` 2200, `USER.md` 1375 (Hermes defaults), configurable.
 - **One `memory` tool** — `target: memory|user`, `action: add|replace|remove|demote`, plus an atomic batch (`operations[]`). Adds are idempotent; the budget is checked only on the final batch result, and an over-budget write returns a *consolidate-and-retry* error rather than silently dropping anything.
-- **Self-learning review** — after N turns, on session idle, a review pass reads the conversation and writes memory **and** skills.
+- **Self-learning review** — after N turns, on session idle, a review pass reads the conversation and writes memory **and** skills. When the capped files are full it frees room itself (demote/shorten stale entries in the same batch, with one retry), so a full store never silently swallows new facts.
 - **Session recall** — `session_search` reads OpenCode's own session database (read-only) to find and read past conversations (discovery / read / scroll / browse; actual messages, no LLM). Discovery matches message text only (never JSON metadata like `"type":"text"`), any term, ranked by terms hit. A system-prompt nudge tells the model to use it when the user references the past. Both storage layouts are supported (OpenCode 1 `session`/`message`/`part`, OpenCode 2 `session_v2`/`session_message`), detected per database.
 - **External memory provider (optional, one)** — `provider: "sqlite"` adds an unbounded local note store with **automatic prefetch** (relevant notes injected before each turn). It mirrors built-in writes: `add`/`replace` store the current fact (a replace deletes the superseded one), `remove` propagates the deletion, and `demote` evicts a fact from the capped file while keeping it recallable. Off by default (Hermes ships built-in-only).
 - **Skills (procedural memory)** — one `skill_manage` tool: authoring actions `create`/`patch`/`edit`/`delete`/`write_file`/`remove_file`, plus lifecycle actions `curate` (mark agent-created skills stale, archive very old ones; never touches user/pinned skills) and `restore`. Validation and guards: support files may only be written/removed under `references/`/`scripts/`/`templates/`/`assets/` (never `SKILL.md`), path traversal is rejected, `restore` matches the exact archived name, and the autonomous review may only edit agent-created skills. opencode itself lists skills in the system prompt and its read tool opens SKILL.md/support files, so no separate list/view tools.
@@ -133,13 +133,15 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 ## Testing
 
 ```bash
-bun run test        # 205 hermetic checks (no model, no network)
+bun run test        # 219 hermetic checks (no model, no network)
 bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
+#   E2E_KEEP=1         keep the clean room for inspection
+#   E2E_FULL_MEMORY=1  seed the char cap full: proves the review frees room itself
 ```
 
 `scripts/e2e-idle.py` is the one thing the hermetic suite cannot cover: the background review only fires when a **live server** observes a finished turn and the 10-second debounce elapses. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error and the dream line, and exits non-zero otherwise.
 
-205 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the 4-tool surface, self-learning, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
+219 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the 4-tool surface, self-learning, review consolidation on a full store, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
 
 ## Attribution & License
 

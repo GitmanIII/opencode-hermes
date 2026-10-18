@@ -123,8 +123,7 @@ function existingMemorySection(store: MemoryStore): string {
 }
 
 /** List existing skills so the review model prefers patching over creating. */
-async function existingSkillsSection(root: string): Promise<string> {
-  try {
+async function existingSkillsSection(root: string): Promise<string> {  try {
     const skills = await listSkills(root);
     if (!skills.length) return "";
     let listing = "";
@@ -137,6 +136,102 @@ async function existingSkillsSection(root: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+// ─── Shared review pipeline (background + pre-compaction flush) ───
+
+const BUDGET_ERROR = /exceed the limit/i;
+
+/**
+ * State the budget explicitly. The interactive `memory` tool documents the
+ * "reissue as ONE batch that demotes/shortens AND adds together" flow, but the
+ * review is a plain completion that never sees the tool description — so a full
+ * store silently swallowed every new fact (observed: reviews logged "produced no
+ * applicable operations" indefinitely while MEMORY.md sat at 98%).
+ */
+function budgetSection(store: MemoryStore): string {
+  return (
+    "<memory-budget>\n" +
+    `${store.usage("memory")}\n` +
+    `${store.usage("user")}\n` +
+    "An 'add' whose final result exceeds a target's limit is rejected outright. If a target is near or over its limit, " +
+    "include demotes or shortenings of the least valuable stale entries in the SAME 'operations' batch as the new fact " +
+    "('demote' frees room but keeps the fact recallable in long-term memory; 'remove' is only for wrong or superseded facts). " +
+    "Never omit a fact merely because the store is full.\n" +
+    "</memory-budget>\n\n"
+  );
+}
+
+/** Entries with per-entry sizes, so the consolidation retry can name what to free. */
+function entriesSection(store: MemoryStore): string {
+  const lines: string[] = [];
+  for (const target of ["memory", "user"] as const) {
+    const entries = store.getEntries(target);
+    if (!entries.length) continue;
+    lines.push(`${target} (${store.chars(target)}/${store.charLimit(target)} chars):`);
+    for (const entry of entries) lines.push(`  - [${entry.length} chars] ${entry}`);
+  }
+  return `<entries>\n${lines.join("\n")}\n</entries>\n\n`;
+}
+
+const CONSOLIDATE_INSTRUCTION =
+  "The previous batch applied nothing because it would have exceeded the char limit. Reissue ONE batch that demotes or " +
+  "shortens enough low-priority entries to make room AND includes your new fact(s) — the limit is checked only on the final " +
+  "result. Use the size shown for each entry to choose what to free.";
+
+export type ExtractedOperations = { operations: MemoryOperation[]; skills: SkillOperation[]; error?: string };
+
+/**
+ * Apply a parsed operation set, retrying once when the ONLY thing that stopped it
+ * was the char budget and nothing at all was written.
+ */
+async function applyReviewOperations(opts: {
+  channel: ReviewChannel;
+  store: MemoryStore;
+  systemPrompt: string;
+  userPrompt: string;
+  sessionID: string;
+  parsed: ExtractedOperations;
+  skillsRoot?: string;
+  manager?: MemoryManager | null;
+}): Promise<{ applied: number; appliedSkills: number; errors: string[] }> {
+  let parsed = opts.parsed;
+  let userPrompt = opts.userPrompt;
+
+  for (let attempt = 0; ; attempt++) {
+    const memory = parsed.operations.length
+      ? await applyOperations(opts.store, parsed.operations, opts.manager)
+      : { errors: [] as string[], applied: 0 };
+    const skillOps = opts.skillsRoot ? parsed.skills : [];
+    const skills = skillOps.length
+      ? await applySkillOperations(opts.skillsRoot!, skillOps, { origin: "agent" })
+      : { errors: [] as string[], applied: 0 };
+    const errors = [...memory.errors, ...skills.errors];
+
+    // Something landed, or the retry already ran — settle for this result.
+    if (attempt >= 1 || memory.applied > 0 || skills.applied > 0) {
+      return { applied: memory.applied, appliedSkills: skills.applied, errors };
+    }
+    const budgetBlocked = parsed.operations.length > 0 && errors.length > 0 && errors.every((e) => BUDGET_ERROR.test(e));
+    if (!budgetBlocked) return { applied: 0, appliedSkills: 0, errors };
+
+    userPrompt = `${userPrompt}\n\n${entriesSection(opts.store)}${CONSOLIDATE_INSTRUCTION}\nRespond with the operations JSON only.`;
+    const completion = await opts.channel.complete(opts.systemPrompt, userPrompt, opts.sessionID);
+    if (completion.error || !completion.text) return { applied: 0, appliedSkills: 0, errors };
+    const next = extractOperations(completion.text);
+    if (next.error) return { applied: 0, appliedSkills: 0, errors };
+    parsed = next;
+  }
+}
+
+/** Build the review user prompt: transcript, existing memory/skills, budget. */
+async function reviewPrompt(opts: { intro: string; transcript: string; projectId: string; store: MemoryStore; skillsRoot?: string }): Promise<string> {
+  const skillsSection = opts.skillsRoot ? await existingSkillsSection(opts.skillsRoot) : "";
+  return (
+    `${opts.intro}\n\n<conversation>\n${opts.transcript}\n</conversation>\n\n` +
+    `${existingMemorySection(opts.store)}${skillsSection}${budgetSection(opts.store)}` +
+    `Active project: ${opts.projectId || "(none)"}\nRespond with the operations JSON only.`
+  );
 }
 
 export async function runBackgroundReview(
@@ -154,26 +249,20 @@ export async function runBackgroundReview(
     const transcript = buildTranscript(all.slice(lastCount));
     if (!transcript.trim()) return { savedCount: 0 };
 
-    const skillsSection = skillsRoot ? await existingSkillsSection(skillsRoot) : "";
-    const userPrompt = `${REVIEW_USER_PROMPT}\n\n<conversation>\n${transcript}\n</conversation>\n\n${existingMemorySection(store)}${skillsSection}Active project: ${projectId || "(none)"}\nRespond with the operations JSON only.`;
+    const userPrompt = await reviewPrompt({ intro: REVIEW_USER_PROMPT, transcript, projectId, store, skillsRoot });
     const completion = await channel.complete(DIRECT_REVIEW_SYSTEM_PROMPT, userPrompt, sessionID);
     if (completion.error || !completion.text) return { savedCount: 0, error: completion.error || "empty model output" };
 
-    const { operations, skills, error } = extractOperations(completion.text);
-    if (error) return { savedCount: 0, error };
+    const parsed = extractOperations(completion.text);
+    if (parsed.error) return { savedCount: 0, error: parsed.error };
     reviewedUpTo.set(sessionID, all.length);
 
-    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[], applied: 0 };
-    const skillOps = skillsRoot ? skills : [];
-    const appliedSkills = skillOps.length
-      ? await applySkillOperations(skillsRoot!, skillOps, { origin: "agent" })
-      : { errors: [] as string[], applied: 0 };
-    const errs = [...applied.errors, ...appliedSkills.errors];
-    if (!applied.applied && !appliedSkills.applied) debug(`review for session ${sessionID} produced no applicable operations`);
+    const applied = await applyReviewOperations({ channel, store, systemPrompt: DIRECT_REVIEW_SYSTEM_PROMPT, userPrompt, sessionID, parsed, skillsRoot, manager });
+    if (!applied.applied && !applied.appliedSkills) debug(`review for session ${sessionID} produced no applicable operations`);
     return {
-      savedCount: applied.applied + appliedSkills.applied,
-      savedSkills: appliedSkills.applied,
-      error: errs.join("; ") || undefined,
+      savedCount: applied.applied + applied.appliedSkills,
+      savedSkills: applied.appliedSkills,
+      error: applied.errors.join("; ") || undefined,
     };
   } catch (err) {
     return { savedCount: 0, error: String(err) };
@@ -193,23 +282,19 @@ export async function runFlushReview(
     const transcript = buildTranscript(all.slice(-20));
     if (!transcript.trim()) return { savedCount: 0 };
 
-    const skillsSection = skillsRoot ? await existingSkillsSection(skillsRoot) : "";
-    const userPrompt = `Session ${sessionID} (project: ${projectId || "(none)"}) is being compressed.\n\n<conversation>\n${transcript}\n</conversation>\n\n${existingMemorySection(store)}${skillsSection}Respond with the operations JSON only.`;
+    const intro = `Session ${sessionID} (project: ${projectId || "(none)"}) is being compressed.`;
+    const userPrompt = await reviewPrompt({ intro, transcript, projectId, store, skillsRoot });
     const completion = await channel.complete(DIRECT_FLUSH_SYSTEM_PROMPT, userPrompt, sessionID);
     if (completion.error || !completion.text) return { savedCount: 0, error: completion.error || "empty model output" };
 
-    const { operations, skills, error } = extractOperations(completion.text);
-    if (error) return { savedCount: 0, error };
-    const applied = operations.length ? await applyOperations(store, operations, manager) : { errors: [] as string[], applied: 0 };
-    const skillOps = skillsRoot ? skills : [];
-    const appliedSkills = skillOps.length
-      ? await applySkillOperations(skillsRoot!, skillOps, { origin: "agent" })
-      : { errors: [] as string[], applied: 0 };
-    const errs = [...applied.errors, ...appliedSkills.errors];
+    const parsed = extractOperations(completion.text);
+    if (parsed.error) return { savedCount: 0, error: parsed.error };
+
+    const applied = await applyReviewOperations({ channel, store, systemPrompt: DIRECT_FLUSH_SYSTEM_PROMPT, userPrompt, sessionID, parsed, skillsRoot, manager });
     return {
-      savedCount: applied.applied + appliedSkills.applied,
-      savedSkills: appliedSkills.applied,
-      error: errs.join("; ") || undefined,
+      savedCount: applied.applied + applied.appliedSkills,
+      savedSkills: applied.appliedSkills,
+      error: applied.errors.join("; ") || undefined,
     };
   } catch (err) {
     return { savedCount: 0, error: String(err) };
