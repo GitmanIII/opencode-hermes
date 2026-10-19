@@ -119,7 +119,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 
 **Companion:** [**opencode-hermes-embeddings**](https://github.com/GitmanIII/opencode-hermes-embeddings) — semantic recall on your own GPU via HuggingFace **text-embeddings-inference** (`nomic-embed-text-v1.5`, 768-dim), project-scoped.
 
-**Versioning:** from v0.10.4 onward, this repo and the companion share **one version number**. They are a pair — the host and its optional provider — so a release of either bumps both, and the same number always means a tested pair. The current pair is **opencode-hermes v0.10.4 + opencode-hermes-embeddings v0.10.4**. The core exposes the host `log`/`warn` sinks from v0.10.3, which embeddings v0.9.3+ uses; on an older core the provider falls back to `console`. See [RELEASING.md](RELEASING.md).
+**Versioning:** from v0.10.4 onward, this repo and the companion share **one version number**. They are a pair — the host and its optional provider — so a release of either bumps both, and the same number always means a tested pair. The current pair is **opencode-hermes v0.10.5 + opencode-hermes-embeddings v0.10.5**. The core exposes the host `log`/`warn` sinks from v0.10.3, which embeddings v0.9.3+ uses; on an older core the provider falls back to `console`. See [RELEASING.md](RELEASING.md).
 
 ```jsonc
 {
@@ -136,7 +136,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 ## Testing
 
 ```bash
-bun run test        # 226 hermetic checks (no model, no network)
+bun run test        # 237 hermetic checks (no model, no network)
 bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
 #   E2E_KEEP=1         keep the clean room for inspection
 #   E2E_FULL_MEMORY=1  seed the char cap full: proves the review frees room itself
@@ -148,7 +148,7 @@ bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
 
 **Note:** a bare ACP `session/new` has **no model**, so the plugin's pin (which reads the reviewed session's model) resolves to nothing and `generate.text` falls back to the global default. If that default is a free-tier model the server rejects it (`Generate.UnavailableError`), so pass `E2E_MODEL` — otherwise the script fails with that reason printed.
 
-226 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the V2 idle trigger (turn-completion event → review, and `session.created` re-freezing the snapshot), the 4-tool surface, self-learning, review consolidation on a full store, skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
+237 hermetic checks (no model, no network): store semantics (incl. concurrent-write serialization and cross-process refresh), injection, plugin wiring (V1 hooks and the V2 context/hooks/tools), the V2 idle trigger (turn-completion event → review, and `session.created` re-freezing the snapshot), the 4-tool surface, self-learning, review consolidation on a full store (per-target retry; a skill write or error cannot suppress it), skills (incl. remove_file/restore guards), efficacy, token cost, curation, JSONC config parsing + warnings, session recall on both DB layouts (multi-term discovery, metadata-token filtering), dream GC.
 
 ## Attribution & License
 

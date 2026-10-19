@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ReviewChannel, TranscriptMessage } from "../channel.ts";
 import { runBackgroundReview } from "../learn.ts";
-import { setMemoryRoot } from "../paths.ts";
+import { setMemoryRoot, setSkillsRoot } from "../paths.ts";
 import { MemoryStore } from "../store.ts";
 
 let passed = 0;
@@ -102,6 +102,86 @@ async function freshStore(label: string) {
   assert("nothing was saved", res.savedCount === 0, `saved=${res.savedCount}`);
   assert("only one retry (no loop)", calls() === 2, `calls=${calls()}`);
 
+  await fs.rm(TMP, { recursive: true, force: true });
+}
+
+// ── 3. a skill write or error must not suppress the memory retry ──
+{
+  const { TMP, store } = await freshStore("skill-ok");
+  const SKILLS = path.join(TMP, "skills");
+  await fs.mkdir(SKILLS, { recursive: true });
+  setSkillsRoot(SKILLS);
+  const SKILL = "---\nname: consolidation-skill\ndescription: test skill\n---\n\n# Test\n";
+  const first = JSON.stringify({
+    operations: [{ action: "add", content: FACT }],
+    skills: [{ action: "create", name: "consolidation-skill", content: SKILL }],
+  });
+  const { channel, calls } = channelWith([first, CONSOLIDATE]);
+  const res = await runBackgroundReview(channel, store, "proj", "ses_skill_ok", SKILLS);
+  const file = await fs.readFile(path.join(TMP, "MEMORY.md"), "utf-8");
+  assert("a successful skill does not suppress the memory retry", calls() === 2, `calls=${calls()}`);
+  assert("memory fact is saved when a skill also applies", file.includes("GAMMA-FACT"), res.error ?? "");
+  assert("the skill was applied once", await fs.stat(path.join(SKILLS, "consolidation-skill", "SKILL.md")).then(() => true, () => false));
+  await fs.rm(TMP, { recursive: true, force: true });
+}
+
+{
+  const { TMP, store } = await freshStore("skill-err");
+  const SKILLS = path.join(TMP, "skills");
+  await fs.mkdir(SKILLS, { recursive: true });
+  setSkillsRoot(SKILLS);
+  const first = JSON.stringify({
+    operations: [{ action: "add", content: FACT }],
+    skills: [{ action: "create", name: "bad name!", content: "---\nname: bad name!\ndescription: x\n---\n" }],
+  });
+  const { channel, calls } = channelWith([first, CONSOLIDATE]);
+  const res = await runBackgroundReview(channel, store, "proj", "ses_skill_err", SKILLS);
+  const file = await fs.readFile(path.join(TMP, "MEMORY.md"), "utf-8");
+  assert("a skill error does not suppress the memory retry", calls() === 2, `calls=${calls()}`);
+  assert("memory fact is saved despite the skill error", file.includes("GAMMA-FACT"), res.error ?? "");
+  assert("the skill error is still reported", /invalid skill name/.test(res.error ?? ""), res.error ?? "");
+  await fs.rm(TMP, { recursive: true, force: true });
+}
+
+// ── 4. one target blocks, the other succeeds → retry only the blocked target ──
+{
+  const TMP = await fs.mkdtemp(path.join(os.tmpdir(), "hermes-consol-mixed-"));
+  setMemoryRoot(TMP);
+  const MFACT = "MEMORY-FACT " + "m".repeat(100);
+  const UFACT = "USER-FACT " + "u".repeat(200);
+  await fs.writeFile(
+    path.join(TMP, "MEMORY.md"),
+    `MEMORY (your personal notes) [0% — 0/2200 chars]\n══════════════════════════\nseed memory fact\n`,
+  );
+  await fs.writeFile(
+    path.join(TMP, "USER.md"),
+    `USER PROFILE (who the user is) [0% — 0/1375 chars]\n══════════════════════════\nUSER-ALPHA ${"a".repeat(600)}\n§\nUSER-BETA ${"b".repeat(600)}\n`,
+  );
+  const store = new MemoryStore({});
+  await store.loadFromDisk();
+  const first = JSON.stringify({
+    operations: [
+      { action: "add", target: "memory", content: MFACT },
+      { action: "add", target: "user", content: UFACT },
+    ],
+    skills: [],
+  });
+  const retry = JSON.stringify({
+    operations: [
+      { action: "demote", target: "user", old_text: "USER-ALPHA" },
+      { action: "add", target: "user", content: UFACT },
+    ],
+    skills: [],
+  });
+  const { channel, prompts, calls } = channelWith([first, retry]);
+  const res = await runBackgroundReview(channel, store, "proj", "ses_mixed");
+  const memoryFile = await fs.readFile(path.join(TMP, "MEMORY.md"), "utf-8");
+  const userFile = await fs.readFile(path.join(TMP, "USER.md"), "utf-8");
+  assert("the blocked target is retried", calls() === 2, `calls=${calls()}`);
+  assert("retry names only the blocked target", /could not write to: user/.test(prompts[1] ?? ""), (prompts[1] ?? "").slice(0, 160));
+  assert("the successful memory target is not re-applied", (memoryFile.match(/MEMORY-FACT/g) ?? []).length === 1, `count=${(memoryFile.match(/MEMORY-FACT/g) ?? []).length}`);
+  assert("both facts are saved", memoryFile.includes(MFACT) && userFile.includes(UFACT), res.error ?? "");
+  assert("user store is back under the cap", store.chars("user") <= 1375, `chars=${store.chars("user")}`);
   await fs.rm(TMP, { recursive: true, force: true });
 }
 

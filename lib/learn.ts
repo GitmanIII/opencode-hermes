@@ -78,32 +78,54 @@ export function extractOperations(text: string): {
 }
 
 /** Apply memory operations grouped by target (each target is an atomic batch). */
+export type ApplyOperationsResult = {
+  errors: string[];
+  applied: number;
+  /** Per-target applied counts; a batch is atomic per target. */
+  appliedByTarget: Record<Target, number>;
+  /** Per-target errors, already prefixed with the target name. */
+  errorsByTarget: Record<Target, string[]>;
+};
+
+function emptyApplyResult(): ApplyOperationsResult {
+  return {
+    errors: [],
+    applied: 0,
+    appliedByTarget: { memory: 0, user: 0 },
+    errorsByTarget: { memory: [], user: [] },
+  };
+}
+
 export async function applyOperations(
   store: MemoryStore,
   operations: MemoryOperation[],
   manager?: MemoryManager | null,
-): Promise<{ errors: string[]; applied: number }> {
-  const errors: string[] = [];
-  let applied = 0;
+): Promise<ApplyOperationsResult> {
+  const result = emptyApplyResult();
   const byTarget = new Map<Target, MemoryOperation[]>();
   for (const op of operations) {
     const t = ((op as { target?: Target }).target ?? "memory") as Target;
     if (t !== "memory" && t !== "user") {
-      errors.push(`memory operation ignored: invalid target '${String((op as { target?: unknown }).target)}'`);
+      result.errors.push(`memory operation ignored: invalid target '${String((op as { target?: unknown }).target)}'`);
       continue;
     }
     if (!byTarget.has(t)) byTarget.set(t, []);
     byTarget.get(t)!.push(op);
   }
   for (const [target, ops] of byTarget) {
-    const result = await store.applyBatch(target, ops);
-    if (!result.success) errors.push(`${target}: ${result.error}`);
-    else {
-      applied += result.resolved?.length ?? ops.length;
-      if (manager) await manager.mirrorResolved(result.resolved);
+    const applied = await store.applyBatch(target, ops);
+    if (!applied.success) {
+      const error = `${target}: ${applied.error}`;
+      result.errors.push(error);
+      result.errorsByTarget[target].push(error);
+    } else {
+      const count = applied.resolved?.length ?? ops.length;
+      result.applied += count;
+      result.appliedByTarget[target] += count;
+      if (manager) await manager.mirrorResolved(applied.resolved);
     }
   }
-  return { errors, applied };
+  return result;
 }
 
 // ─── Background review (session.idle) ───
@@ -123,7 +145,8 @@ function existingMemorySection(store: MemoryStore): string {
 }
 
 /** List existing skills so the review model prefers patching over creating. */
-async function existingSkillsSection(root: string): Promise<string> {  try {
+async function existingSkillsSection(root: string): Promise<string> {
+  try {
     const skills = await listSkills(root);
     if (!skills.length) return "";
     let listing = "";
@@ -174,16 +197,28 @@ function entriesSection(store: MemoryStore): string {
   return `<entries>\n${lines.join("\n")}\n</entries>\n\n`;
 }
 
-const CONSOLIDATE_INSTRUCTION =
-  "The previous batch applied nothing because it would have exceeded the char limit. Reissue ONE batch that demotes or " +
-  "shortens enough low-priority entries to make room AND includes your new fact(s) — the limit is checked only on the final " +
-  "result. Use the size shown for each entry to choose what to free.";
+function targetOf(op: MemoryOperation): Target | undefined {
+  const target = (op as { target?: unknown }).target;
+  if (target === undefined) return "memory";
+  return target === "memory" || target === "user" ? target : undefined;
+}
+
+function consolidateInstruction(blocked: Target[]): string {
+  const which = blocked.length === 1 ? "that target" : "those targets";
+  return (
+    `The previous batch could not write to: ${blocked.join(", ")} because it would exceed the char limit. ` +
+    `Reissue ONE batch for ${which} only, demoting or shortening enough low-priority entries to make room AND including ` +
+    `your new fact(s) — the limit is checked only on the final result. Use the size shown for each entry to choose what to free.`
+  );
+}
 
 export type ExtractedOperations = { operations: MemoryOperation[]; skills: SkillOperation[]; error?: string };
 
 /**
- * Apply a parsed operation set, retrying once when the ONLY thing that stopped it
- * was the char budget and nothing at all was written.
+ * Apply a parsed operation set. If a target's batch was blocked by the char
+ * budget, retry once for those targets only. Skills are applied once and never
+ * re-applied: a skill write (or its error) must not suppress the memory retry,
+ * and a retry must not duplicate skill work.
  */
 async function applyReviewOperations(opts: {
   channel: ReviewChannel;
@@ -195,33 +230,66 @@ async function applyReviewOperations(opts: {
   skillsRoot?: string;
   manager?: MemoryManager | null;
 }): Promise<{ applied: number; appliedSkills: number; errors: string[] }> {
-  let parsed = opts.parsed;
-  let userPrompt = opts.userPrompt;
+  const memory = opts.parsed.operations.length
+    ? await applyOperations(opts.store, opts.parsed.operations, opts.manager)
+    : emptyApplyResult();
+  const skillOps = opts.skillsRoot ? opts.parsed.skills : [];
+  const skills = skillOps.length
+    ? await applySkillOperations(opts.skillsRoot!, skillOps, { origin: "agent" })
+    : { errors: [] as string[], applied: 0 };
+  const firstErrors = [...memory.errors, ...skills.errors];
 
-  for (let attempt = 0; ; attempt++) {
-    const memory = parsed.operations.length
-      ? await applyOperations(opts.store, parsed.operations, opts.manager)
-      : { errors: [] as string[], applied: 0 };
-    const skillOps = opts.skillsRoot ? parsed.skills : [];
-    const skills = skillOps.length
-      ? await applySkillOperations(opts.skillsRoot!, skillOps, { origin: "agent" })
-      : { errors: [] as string[], applied: 0 };
-    const errors = [...memory.errors, ...skills.errors];
-
-    // Something landed, or the retry already ran — settle for this result.
-    if (attempt >= 1 || memory.applied > 0 || skills.applied > 0) {
-      return { applied: memory.applied, appliedSkills: skills.applied, errors };
-    }
-    const budgetBlocked = parsed.operations.length > 0 && errors.length > 0 && errors.every((e) => BUDGET_ERROR.test(e));
-    if (!budgetBlocked) return { applied: 0, appliedSkills: 0, errors };
-
-    userPrompt = `${userPrompt}\n\n${entriesSection(opts.store)}${CONSOLIDATE_INSTRUCTION}\nRespond with the operations JSON only.`;
-    const completion = await opts.channel.complete(opts.systemPrompt, userPrompt, opts.sessionID);
-    if (completion.error || !completion.text) return { applied: 0, appliedSkills: 0, errors };
-    const next = extractOperations(completion.text);
-    if (next.error) return { applied: 0, appliedSkills: 0, errors };
-    parsed = next;
+  const blockedTargets = (["memory", "user"] as const).filter(
+    (target) =>
+      memory.appliedByTarget[target] === 0 &&
+      memory.errorsByTarget[target].some((error) => BUDGET_ERROR.test(error)),
+  );
+  if (!blockedTargets.length) {
+    return { applied: memory.applied, appliedSkills: skills.applied, errors: firstErrors };
   }
+
+  const userPrompt =
+    `${opts.userPrompt}\n\n${entriesSection(opts.store)}${consolidateInstruction(blockedTargets)}\n` +
+    "Respond with the operations JSON only.";
+  const completion = await opts.channel.complete(opts.systemPrompt, userPrompt, opts.sessionID);
+  if (completion.error || !completion.text) {
+    return {
+      applied: memory.applied,
+      appliedSkills: skills.applied,
+      errors: [...firstErrors, completion.error || "consolidation retry returned no text"],
+    };
+  }
+  const next = extractOperations(completion.text);
+  if (next.error) {
+    return { applied: memory.applied, appliedSkills: skills.applied, errors: [...firstErrors, next.error] };
+  }
+
+  // Apply only the blocked targets. A successful target from the first batch is
+  // not re-applied, and skills are not repeated.
+  const retryOps = next.operations.filter((op) => {
+    const target = targetOf(op);
+    return target !== undefined && blockedTargets.includes(target);
+  });
+  if (!retryOps.length) {
+    return {
+      applied: memory.applied,
+      appliedSkills: skills.applied,
+      errors: [...firstErrors, `consolidation retry produced no operations for: ${blockedTargets.join(", ")}`],
+    };
+  }
+
+  const retry = await applyOperations(opts.store, retryOps, opts.manager);
+  const errors = [...skills.errors];
+  for (const target of ["memory", "user"] as const) {
+    errors.push(...(blockedTargets.includes(target) ? retry.errorsByTarget[target] : memory.errorsByTarget[target]));
+  }
+  // Preserve errors not attached to a target (invalid-target operations).
+  errors.push(...memory.errors.filter((error) => !/^(memory|user):/.test(error)));
+  return {
+    applied: memory.applied + retry.applied,
+    appliedSkills: skills.applied,
+    errors,
+  };
 }
 
 /** Build the review user prompt: transcript, existing memory/skills, budget. */
