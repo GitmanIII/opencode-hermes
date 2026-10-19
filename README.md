@@ -119,7 +119,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 
 **Companion:** [**opencode-hermes-embeddings**](https://github.com/GitmanIII/opencode-hermes-embeddings) — semantic recall on your own GPU via HuggingFace **text-embeddings-inference** (`nomic-embed-text-v1.5`, 768-dim), project-scoped.
 
-**Versioning:** this repo and the companion are versioned **independently** (since v0.10.0). Match features, not numbers; the pair tested together for this release is **opencode-hermes v0.10.4 + opencode-hermes-embeddings v0.9.4**. The core exposes the host `log`/`warn` sinks from v0.10.3, which embeddings v0.9.3+ uses; on an older core the provider falls back to `console`.
+**Versioning:** this repo and the companion share **one version number**. They are a pair — the host and its optional provider — so a release of either bumps both, and the same number always means a tested pair. The current pair is **opencode-hermes v0.10.4 + opencode-hermes-embeddings v0.10.4**. The core exposes the host `log`/`warn` sinks from v0.10.3, which embeddings v0.9.3+ uses; on an older core the provider falls back to `console`.
 
 ```jsonc
 {
