@@ -10,8 +10,10 @@ outlives the final prompt and the plugin can react.
 What it proves, in order:
   1. the plugin loads and the `prompt` hook fires (turn counter),
   2. a finished turn triggers the review (`background review: memory=...`),
-  3. review memory lands in the scratch MEMORY.md,
-  4. the dream reconciles against the provider (`dream: canonical=... added=...`).
+  3. the written memory is printed for inspection (the normal-mode pass check is
+     the review log line; full-store mode additionally asserts the fact landed),
+  4. when a provider is active, the dream line is printed
+     (`dream: canonical=... added=...`); the pass check is the review, not the dream.
 
 Isolation: HERMES_OPENCODE_MEMORY_ROOT/SKILLS_ROOT/LOG point at ROOM, so the real
 ~/.config/opencode/memories and the real provider store are untouched. The

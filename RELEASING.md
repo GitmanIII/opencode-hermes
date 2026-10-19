@@ -1,9 +1,9 @@
 # Releasing
 
 `opencode-hermes` and `opencode-hermes-embeddings` are a pair: the host and its
-optional provider. They share **one version number**. A release bumps both,
-even when one repo has no code change, so the same number always means a tested
-pair.
+optional provider. From v0.10.4 onward they share **one version number**. A
+release bumps both, even when one repo has no code change, so the same number
+always means a tested pair.
 
 Both a **tag** and a **GitHub Release** are part of a release. The tag is the
 Git truth; the release is the human-facing page, built from the tag message.

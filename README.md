@@ -119,7 +119,7 @@ Provider options go under `providerOptions`; `initialize()` receives `{ memoryRo
 
 **Companion:** [**opencode-hermes-embeddings**](https://github.com/GitmanIII/opencode-hermes-embeddings) — semantic recall on your own GPU via HuggingFace **text-embeddings-inference** (`nomic-embed-text-v1.5`, 768-dim), project-scoped.
 
-**Versioning:** this repo and the companion share **one version number**. They are a pair — the host and its optional provider — so a release of either bumps both, and the same number always means a tested pair. The current pair is **opencode-hermes v0.10.4 + opencode-hermes-embeddings v0.10.4**. The core exposes the host `log`/`warn` sinks from v0.10.3, which embeddings v0.9.3+ uses; on an older core the provider falls back to `console`. See [RELEASING.md](RELEASING.md).
+**Versioning:** from v0.10.4 onward, this repo and the companion share **one version number**. They are a pair — the host and its optional provider — so a release of either bumps both, and the same number always means a tested pair. The current pair is **opencode-hermes v0.10.4 + opencode-hermes-embeddings v0.10.4**. The core exposes the host `log`/`warn` sinks from v0.10.3, which embeddings v0.9.3+ uses; on an older core the provider falls back to `console`. See [RELEASING.md](RELEASING.md).
 
 ```jsonc
 {
@@ -144,7 +144,7 @@ bun run e2e:idle    # live end-to-end of the V2 idle path (needs a model + TEI)
 #                      default is a free-tier model, which the server refuses)
 ```
 
-`scripts/e2e-idle.py` is the live counterpart of the hermetic idle-trigger check: the suite proves a `session.execution.*` event reaches `core.onIdle` and runs the review against a mock host, while the script proves a **live server** actually emits those events and the review runs end to end. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error and the dream line, and exits non-zero otherwise. It sets `HERMES_IDLE_DEBOUNCE_MS` low so it needn't wait the default 10 seconds.
+`scripts/e2e-idle.py` is the live counterpart of the hermetic idle-trigger check: the suite proves a `session.execution.*` event reaches `core.onIdle` and runs the review against a mock host, while the script proves a **live server** actually emits those events and the review runs end to end. It drives a clean-room `opencode acp` instance (`HERMES_OPENCODE_MEMORY_ROOT` etc. redirected, so your real memory is untouched), asserts `background review: memory=…` with no error, prints the written memory, and prints the dream line when a provider is active; it exits non-zero otherwise. It sets `HERMES_IDLE_DEBOUNCE_MS` low so it needn't wait the default 10 seconds.
 
 **Note:** a bare ACP `session/new` has **no model**, so the plugin's pin (which reads the reviewed session's model) resolves to nothing and `generate.text` falls back to the global default. If that default is a free-tier model the server rejects it (`Generate.UnavailableError`), so pass `E2E_MODEL` — otherwise the script fails with that reason printed.
 
