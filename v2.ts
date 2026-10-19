@@ -64,6 +64,37 @@ export function toTranscript(messages: readonly V2Message[]): TranscriptMessage[
   return out;
 }
 
+type V2EventLocation = { directory?: string; workspaceID?: string };
+type V2Event = { type: string; data?: { sessionID?: string }; location?: V2EventLocation };
+
+/**
+ * `ctx.location` is where this plugin instance loaded, not the location of every
+ * event it receives (V2 docs). Session events carry `location`; ignore events
+ * from other workspaces/directories so a review can never use this instance's
+ * project id/provider scope for another project.
+ */
+export function isSameLocation(
+  eventLocation: V2EventLocation | undefined,
+  own: { directory: string; workspaceID?: string; project?: { directory?: string; canonical?: string } },
+): boolean {
+  if (!eventLocation) return true;
+  if (eventLocation.workspaceID && own.workspaceID) return eventLocation.workspaceID === own.workspaceID;
+  if (!eventLocation.directory) return true;
+  return (
+    eventLocation.directory === own.directory ||
+    eventLocation.directory === own.project?.directory ||
+    eventLocation.directory === own.project?.canonical
+  );
+}
+
+function isExecutionEvent(type: string): boolean {
+  return (
+    type === "session.execution.succeeded" ||
+    type === "session.execution.failed" ||
+    type === "session.execution.interrupted"
+  );
+}
+
 /** Adapt the V2 plugin context to the host-agnostic `ReviewChannel`. */
 function createV2Channel(ctx: Plugin.Context, log: (msg: string) => void): ReviewChannel {
   // Review completions must run on the model the reviewed session actually used.
@@ -156,21 +187,85 @@ export const plugin = Plugin.define({
     // and emits execution.succeeded, but no session.idle/status), so trigger on
     // the execution result instead — same moment V1's `session.idle` fired.
     const controller = new AbortController();
-    void (async () => {
+    const queue: V2Event[] = [];
+    const EVENT_QUEUE_LIMIT = 1000;
+    let draining = false;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        if (controller.signal.aborted) return resolve();
+        let timer: ReturnType<typeof setTimeout>;
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        timer = setTimeout(() => {
+          controller.signal.removeEventListener("abort", onAbort);
+          resolve();
+        }, ms);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+
+    const handleEvent = async (event: V2Event) => {
+      if (!isSameLocation(event.location, ctx.location)) return;
+      if (event.type === "session.created") await core.onSessionCreated();
+      else if (event.type === "session.deleted") {
+        if (event.data?.sessionID) core.onSessionDeleted(event.data.sessionID);
+      } else if (isExecutionEvent(event.type) && event.data?.sessionID) {
+        await core.onIdle(event.data.sessionID);
+      }
+    };
+
+    // The shared event source waits for each subscriber to accept an event, so
+    // do only queue work here; the drain worker performs the slow disk/network
+    // calls without backpressuring the stream.
+    const drain = async () => {
+      if (draining) return;
+      draining = true;
       try {
-        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-          if (event.type === "session.created") await core.onSessionCreated();
-          else if (event.type === "session.deleted") core.onSessionDeleted(event.data.sessionID);
-          else if (
-            event.type === "session.execution.succeeded" ||
-            event.type === "session.execution.failed" ||
-            event.type === "session.execution.interrupted"
-          ) {
-            await core.onIdle(event.data.sessionID);
+        while (queue.length && !controller.signal.aborted) {
+          const event = queue.shift()!;
+          try {
+            await handleEvent(event);
+          } catch (err) {
+            log(`event handler error: ${String(err)}`);
           }
         }
-      } catch (err) {
-        if (!controller.signal.aborted) log(`event subscription failed: ${String(err)}`);
+      } finally {
+        draining = false;
+        if (queue.length && !controller.signal.aborted) void drain();
+      }
+    };
+
+    const enqueue = (event: V2Event) => {
+      if (controller.signal.aborted) return;
+      if (queue.length >= EVENT_QUEUE_LIMIT) {
+        queue.shift();
+        log(`event queue full (${EVENT_QUEUE_LIMIT}); dropped the oldest event`);
+      }
+      queue.push(event);
+      void drain();
+    };
+
+    // V2 subscriptions are live-only: no replay and no automatic reconnect. Keep
+    // the subscriber loop alive with backoff so a dropped stream cannot silently
+    // disable background learning until the next restart.
+    void (async () => {
+      let backoff = 500;
+      while (!controller.signal.aborted) {
+        try {
+          for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+            backoff = 500;
+            enqueue(event as V2Event);
+          }
+          if (controller.signal.aborted) break;
+          log("event subscription ended; reconnecting");
+        } catch (err) {
+          if (controller.signal.aborted) break;
+          log(`event subscription failed: ${String(err)}; reconnecting in ${backoff}ms`);
+        }
+        await sleep(backoff);
+        backoff = Math.min(backoff * 2, 30_000);
       }
     })();
 
@@ -210,6 +305,7 @@ export const plugin = Plugin.define({
     // ─── Cleanup ───
     return () => {
       controller.abort();
+      queue.length = 0;
       core.dispose();
     };
   },

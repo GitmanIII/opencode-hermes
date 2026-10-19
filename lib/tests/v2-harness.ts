@@ -30,6 +30,7 @@ process.env.HERMES_OPENCODE_CONFIG = CFG;
 delete process.env.HERMES_OPENCODE_PROVIDER;
 
 const pluginModule = (await import("../../plugin.ts")).default;
+const { isSameLocation } = await import("../../v2.ts");
 
 let passed = 0;
 let failed = 0;
@@ -46,7 +47,7 @@ const assert = (name: string, cond: boolean, detail = "") => {
 type Any = any;
 
 /** Minimal V2 plugin context: records hooks/tools and answers the calls the core makes. */
-function mockContext() {
+function mockContext(opts: { failSubscribeOnce?: boolean } = {}) {
   const hooks = new Map<string, Any>();
   const tools: Any[] = [];
   const synthetic: string[] = [];
@@ -59,6 +60,7 @@ function mockContext() {
   // all, so a broken event name would pass the suite.
   const queued: Any[] = [];
   let waiter: ((result: Any) => void) | null = null;
+  let subscribeCalls = 0;
   const events = {
     push(event: Any) {
       if (waiter) {
@@ -107,8 +109,11 @@ function mockContext() {
       },
     },
     event: {
-      subscribe: ({ signal }: { signal?: AbortSignal } = {}) => ({
-        [Symbol.asyncIterator]: () => ({
+      subscribe: ({ signal }: { signal?: AbortSignal } = {}) => {
+        subscribeCalls++;
+        if (opts.failSubscribeOnce && subscribeCalls === 1) throw new Error("event stream dropped");
+        return {
+          [Symbol.asyncIterator]: () => ({
           next: () => {
             if (queued.length) return Promise.resolve({ value: queued.shift(), done: false });
             return new Promise((resolve, reject) => {
@@ -116,11 +121,12 @@ function mockContext() {
               signal?.addEventListener("abort", () => reject(new Error("aborted")));
             });
           },
-        }),
-      }),
+          }),
+        };
+      },
     },
   };
-  return { ctx, hooks, tools, synthetic, generated, messages, events };
+  return { ctx, hooks, tools, synthetic, generated, messages, events, subscribeCalls: () => subscribeCalls };
 }
 
 const harness = mockContext();
@@ -184,10 +190,25 @@ const snapshotText = async () => {
   return (event.system as Array<{ text: string }>).map((p) => p.text).join("\n");
 };
 
+// event.location is the session's location, not the plugin instance's. Events
+// from another directory must not refresh this instance's snapshot or trigger
+// its review with the wrong project id.
+const own = {
+  directory: "/home/emil/sample-project",
+  project: { directory: "/home/emil/sample-project", canonical: "/home/emil/sample-project" },
+};
+assert("V2 events without a location are accepted", isSameLocation(undefined, own));
+assert("V2 events from the same directory are accepted", isSameLocation({ directory: own.directory }, own));
+assert("V2 events from another directory are ignored", !isSameLocation({ directory: "/home/emil/other" }, own));
+assert("V2 workspace ids take precedence", isSameLocation({ directory: "/elsewhere", workspaceID: "ws1" }, { ...own, workspaceID: "ws1" }));
+
 // session.created → store refresh + snapshot re-freeze: the fact added in
 // section 2 is on disk but not in the snapshot frozen at setup.
 const frozen = await snapshotText();
 assert("V2 snapshot is frozen before a new session", !frozen.includes("v2 harness fact"), frozen.slice(0, 80));
+harness.events.push({ type: "session.created", location: { directory: "/home/emil/other" }, data: { sessionID: "ses_other" } });
+await sleep(150);
+assert("V2 ignores another location's session event", !(await snapshotText()).includes("v2 harness fact"));
 harness.events.push({ type: "session.created", data: { sessionID: "ses_v2" } });
 assert("V2 session.created refreshes the injected snapshot", await waitFor(async () => (await snapshotText()).includes("v2 harness fact")));
 
@@ -199,6 +220,18 @@ const logText = await fs.readFile(path.join(TMP, "test.log"), "utf-8");
 assert("V2 review is logged", logText.includes("background review:"), logText.split("\n").slice(-3).join(" | "));
 
 if (typeof cleanup === "function") await cleanup();
+
+// 6. A dropped event stream reconnects instead of silently disabling learning.
+{
+  const retry = mockContext({ failSubscribeOnce: true });
+  const retryCleanup = await pluginModule.setup(retry.ctx);
+  const retryPrompt = retry.hooks.get("prompt");
+  await retryPrompt({ sessionID: "ses_retry", prompt: { text: "hello again" } });
+  assert("V2 retries a failed event subscription", await waitFor(() => retry.subscribeCalls() >= 2, 3000), `calls=${retry.subscribeCalls()}`);
+  retry.events.push({ type: "session.execution.succeeded", data: { sessionID: "ses_retry" } });
+  assert("V2 review still runs after reconnect", await waitFor(() => retry.generated.length > 0, 3000), `generate calls=${retry.generated.length}`);
+  if (typeof retryCleanup === "function") await retryCleanup();
+}
 
 await fs.rm(TMP, { recursive: true, force: true });
 await fs.rm(SKILLS, { recursive: true, force: true });
